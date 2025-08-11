@@ -1,0 +1,203 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>threefish-best — Threefish‑1024 file encryption tool (Rust)</title>
+  <style>
+    :root{--bg:#0b0d10;--fg:#e6e9ef;--muted:#a8b0bf;--acc:#8bd5ff;--code:#12151a;--border:#232833;}
+    html,body{background:var(--bg);color:var(--fg);margin:0;padding:0;font:16px/1.6 system-ui,-apple-system,Segoe UI,Roboto,Ubuntu,Cantarell,Noto Sans,Helvetica,Arial,"Apple Color Emoji","Segoe UI Emoji";}
+    main{max-width:980px;margin:0 auto;padding:42px 20px 64px;}
+    h1,h2,h3{line-height:1.2;margin:1.2em 0 .4em;}
+    h1{font-size:2.1rem}
+    h2{font-size:1.5rem}
+    h3{font-size:1.2rem}
+    p,li{color:var(--fg);}
+    code,kbd{background:var(--code);padding:.15em .33em;border-radius:6px;border:1px solid var(--border);}
+    pre{background:var(--code);padding:14px 16px;border-radius:12px;overflow:auto;border:1px solid var(--border);}
+    pre code{background:transparent;border:none;padding:0}
+    a{color:var(--acc);text-decoration:none}
+    a:hover{text-decoration:underline}
+    table{border-collapse:collapse;border:1px solid var(--border);width:100%;margin:1em 0;background:var(--code)}
+    th,td{border:1px solid var(--border);padding:.5em .6em;text-align:left;color:var(--fg)}
+    th{background:#1a1f27}
+    .muted{color:var(--muted)}
+    .pill{display:inline-block;border:1px solid var(--border);background:var(--code);border-radius:999px;padding:.2em .65em;margin-right:.3em}
+    .callout{border-left:4px solid var(--acc);background:#12161e;padding:12px 14px;border-radius:10px;margin:1em 0}
+    details{background:#11151c;border:1px solid var(--border);border-radius:10px;padding:12px 14px;margin:1em 0}
+    summary{cursor:pointer;font-weight:600}
+    hr{border:0;border-top:1px solid var(--border);margin:2em 0}
+  </style>
+</head>
+<body>
+<main>
+  <h1>threefish-best <span class="muted">— Threefish‑1024 file encryption tool (Rust)</span></h1>
+  <p>
+    <span class="pill">Cross‑platform</span>
+    <span class="pill">Encrypt‑then‑MAC</span>
+    <span class="pill">Argon2id KDF</span>
+    <span class="pill">Atomic replace</span>
+  </p>
+
+  <p><strong>threefish-best</strong> is a production‑minded file encryption CLI built in Rust around
+  <em>Threefish‑1024</em>. It’s designed to be simple (two commands), safe (verify before decrypt),
+  and reliable (temp‑file + atomic rename). It processes any file (binary or text) and keeps the
+  original filename, encrypting the contents “in place”.</p>
+
+  <div class="callout">
+    <strong>CLI</strong> — usage is intentionally tiny:<br>
+    <code>E &lt;path&gt;</code> to encrypt, <code>D &lt;path&gt;</code> to decrypt.
+  </div>
+
+  <h2 id="quickstart">Quickstart</h2>
+  <pre><code># Build (release mode)
+cargo build --release
+
+# Windows
+target\release\threefish-best.exe E a.txt
+target\release\threefish-best.exe D a.txt
+
+# Linux / macOS
+./target/release/threefish-best E a.txt
+./target/release/threefish-best D a.txt</code></pre>
+
+  <h2 id="features">Features</h2>
+  <ul>
+    <li><strong>Threefish‑1024</strong> with a per‑file random 128‑bit tweak.</li>
+    <li><strong>CTR mode</strong> with a 112‑byte nonce and 128‑bit counter baked into Threefish’s 16×64‑bit block.</li>
+    <li><strong>Encrypt‑then‑MAC</strong> using keyed <strong>BLAKE3</strong> (32‑byte tag stored at EOF).</li>
+    <li><strong>Argon2id</strong> password KDF; derives a 128‑byte cipher key + 32‑byte MAC key.</li>
+    <li><strong>Pre‑decrypt authenticity:</strong> decrypt only after the MAC checks out.</li>
+    <li><strong>Crash safety:</strong> writes to a temp file in the same directory, <code>fsync</code>s, then atomic rename‑replace.</li>
+    <li><strong>Zeroization:</strong> passphrases/keys wiped from memory after use.</li>
+  </ul>
+
+  <h2 id="build">Build</h2>
+  <p>Requires a recent stable Rust toolchain. Copy the two project files and build:</p>
+  <pre><code>cargo build --release</code></pre>
+
+  <h2 id="usage">Usage</h2>
+  <pre><code># Encrypt (prompts for passphrase twice)
+threefish-best E &lt;file&gt;
+
+# Decrypt (prompts once)
+threefish-best D &lt;file&gt;</code></pre>
+
+  <p>Encryption writes a small authenticated header in front of the ciphertext and appends a 32‑byte tag at EOF.
+  Decryption verifies the MAC <em>before</em> it writes any plaintext. Files are replaced atomically via a temp file
+  in the same directory.</p>
+
+  <h2 id="security-design">Security design</h2>
+  <ul>
+    <li><strong>Key derivation:</strong> Argon2id (v1.3). Defaults: <code>m=256&nbsp;MiB</code>, <code>t=3</code>, <code>p=1</code>. Tunable via env (see below).</li>
+    <li><strong>Cipher:</strong> Threefish‑1024 with per‑file random 16‑byte tweak.</li>
+    <li><strong>Mode:</strong> CTR. Keystream block = <code>Threefish(k, tweak, nonce||counter)</code> where <code>nonce</code> is 112 bytes (words 0..13),
+      and <code>counter</code> is 128‑bit (words 14..15, little‑endian).</li>
+    <li><strong>Authentication:</strong> BLAKE3 keyed MAC over <code>header || ciphertext</code> (tag at EOF). Constant‑time verification.</li>
+    <li><strong>Atomicity:</strong> Temp file → <code>fsync</code> temp → <code>fsync</code> directory → <em>rename/replace</em>.</li>
+  </ul>
+
+  <h2 id="file-format">File format</h2>
+  <p>The encrypted file is laid out as:</p>
+  <pre><code>+------------------ 166 B header ------------------+ +----- ciphertext -----+ +-- tag (32 B) --+
+| magic "TF3Fv002" | ver=2 | mode=1 | KDF m/t/p | salt[16] | tweak[16] | nonce[112] |   ENC(data)   |  BLAKE3  |
++--------------------------------------------------+-------------------------+------------------+
+</code></pre>
+
+  <table>
+    <thead><tr><th>Field</th><th>Size</th><th>Description</th></tr></thead>
+    <tbody>
+      <tr><td>magic</td><td>8</td><td>ASCII <code>TF3Fv002</code></td></tr>
+      <tr><td>version</td><td>1</td><td>Format version (2)</td></tr>
+      <tr><td>mode</td><td>1</td><td>1 = CTR + Encrypt‑then‑MAC (BLAKE3)</td></tr>
+      <tr><td>KDF params</td><td>12</td><td><code>m_mib</code>, <code>t</code>, <code>p</code> (each LE <code>u32</code>)</td></tr>
+      <tr><td>salt</td><td>16</td><td>Argon2id salt</td></tr>
+      <tr><td>tweak</td><td>16</td><td>Threefish tweak</td></tr>
+      <tr><td>nonce</td><td>112</td><td>CTR nonce (14×u64, little‑endian)</td></tr>
+      <tr><td>ciphertext</td><td><em>N</em></td><td>Input bytes XOR keystream</td></tr>
+      <tr><td>tag</td><td>32</td><td>BLAKE3 keyed MAC over header||ciphertext, stored at EOF</td></tr>
+    </tbody>
+  </table>
+
+  <p><strong>Overhead:</strong> 166‑byte header + 32‑byte tag = <strong>198 bytes</strong> added to the original size.</p>
+
+  <h2 id="tuning">Tuning (environment variables)</h2>
+  <p>Increase Argon2id cost if your machine has more RAM/CPU; this slows offline attacks while keeping usage simple.</p>
+  <pre><code># defaults: TF_M_MIB=256, TF_T=3, TF_P=1
+TF_M_MIB=512 TF_T=4 TF_P=1 threefish-best E big.iso</code></pre>
+
+  <h2 id="reliability">Reliability &amp; atomic replace</h2>
+  <ul>
+    <li>Writes to a temporary file next to the target path.</li>
+    <li><code>fsync</code>s the temp file, then the directory, then attempts an atomic rename‑replace.</li>
+    <li>On Windows, ensure the destination isn’t open in other apps (Notepad, editors, Explorer preview). The tool closes its own handles before replacing and retries briefly to dodge transient AV/indexer locks.</li>
+  </ul>
+
+  <h2 id="examples">Examples</h2>
+  <pre><code># Basic text round-trip (Linux/macOS)
+echo hello &gt; hello.txt
+./threefish-best E hello.txt
+./threefish-best D hello.txt
+diff hello.txt &lt;(echo hello)   # should be empty
+
+# Basic text round-trip (Windows PowerShell)
+'hello' | Out-File -NoNewline hello.txt
+.\threefish-best.exe E .\hello.txt
+.\threefish-best.exe D .\hello.txt
+Get-Content .\hello.txt</code></pre>
+
+  <h2 id="troubleshooting">Troubleshooting</h2>
+  <details>
+    <summary><strong>“Access is denied (os error 5)” on Windows when finishing encryption/decryption</strong></summary>
+    <p>Another process is holding the file open. Close editors, Explorer preview panes, antivirus scans, etc. The tool already closes its own handles before replace and retries with backoff. If it still fails, copy the file to a different directory and run again.</p>
+  </details>
+  <details>
+    <summary><strong>“authentication failed: wrong passphrase or corrupted file”</strong></summary>
+    <p>The keyed BLAKE3 MAC over <em>header||ciphertext</em> didn’t match. This happens with a wrong passphrase or file corruption. Without the correct passphrase, the data is unrecoverable by design.</p>
+  </details>
+  <details>
+    <summary><strong>“not a TF3Fv002 file / unsupported version”</strong></summary>
+    <p>The file doesn’t match this format’s magic/version, or was produced by a different tool/version.</p>
+  </details>
+  <details>
+    <summary><strong>“file too small to be valid ciphertext”</strong></summary>
+    <p>Encrypted files must be at least 198 bytes larger than the original (header+tag). Extremely small files may trigger this if truncated.</p>
+  </details>
+
+  <h2 id="security-notes">Security notes</h2>
+  <ul>
+    <li>Use a strong, unique passphrase. There is no recovery if you forget it.</li>
+    <li>This implementation uses well‑known primitives via maintained Rust crates, but the codebase itself has not been formally audited.</li>
+    <li>Header parameters are authenticated, preventing silent parameter or tweak/nonce tampering.</li>
+    <li>Nonce &amp; tweak are per‑file random; counter is 128‑bit; block reuse across files is avoided.</li>
+  </ul>
+
+  <h2 id="project-files">Project files</h2>
+  <p><strong>Cargo.toml</strong></p>
+  <pre><code>[package]
+name = "threefish-best"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+anyhow = "1"
+argon2 = "0.5"
+blake3 = "1"
+rpassword = "7"
+rand = "0.8"
+tempfile = "3"
+threefish = { version = "0.5", features = ["cipher", "zeroize"] }
+zeroize = "1"
+subtle = "2"</code></pre>
+
+  <p><strong>src/main.rs</strong> — see the source in our previous message for the full, current file.</p>
+
+  <h2 id="faq">FAQ</h2>
+  <p><strong>Q:</strong> Does it support associated data (AD)?<br>
+     <strong>A:</strong> Not yet. The current MAC covers the header automatically; AD fields could be added in a future mode.</p>
+  <p><strong>Q:</strong> Is it deterministic?<br>
+     <strong>A:</strong> No—each file gets fresh random salt/tweak/nonce. If you need deterministic SIV‑style mode, it can be added as a new format version.</p>
+  <p class="muted">© You. Add a LICENSE file if you plan to share or publish.</p>
+</main>
+</body>
+</html>

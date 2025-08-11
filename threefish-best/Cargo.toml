@@ -1,0 +1,15 @@
+[package]
+name = "threefish-best"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+anyhow = "1"
+argon2 = { version = "0.5" }               # works with map_err; no special features needed
+blake3 = "1"
+rpassword = "7"
+rand = "0.8"
+tempfile = "3"
+threefish = { version = "0.5", features = ["cipher", "zeroize"] }
+zeroize = "1"
+subtle = "2"
