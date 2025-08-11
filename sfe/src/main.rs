@@ -114,7 +114,7 @@ impl HeaderV1 {
 
         buf.extend_from_slice(&self.chunk_size.to_le_bytes());
         buf.extend_from_slice(&self.plaintext_len.to_le_bytes());
-        debug_assert_eq!(buf.len(), HEADER_FIXED_LEN);
+        assert_eq!(buf.len(), HEADER_FIXED_LEN, "header size mismatch");
         buf
     }
 
@@ -364,6 +364,30 @@ fn restrict_temp_file_perms(_file: &File) -> Result<()> {
     Ok(())
 }
 
+// On decrypt: default to safe perms unless opted out.
+fn set_decrypted_perms(cipher_path: &Path, out_file: &File) -> Result<()> {
+    let preserve: bool = env_or("SFE_PRESERVE_PERMS", 0u8) != 0;
+    if preserve {
+        copy_perms(cipher_path, out_file)
+    } else {
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mut perms = out_file.metadata()?.permissions();
+            perms.set_mode(0o600);
+            out_file.set_permissions(perms)?;
+            Ok(())
+        }
+        #[cfg(windows)]
+        {
+            let mut perms = out_file.metadata()?.permissions();
+            perms.set_readonly(false);
+            out_file.set_permissions(perms)?;
+            Ok(())
+        }
+    }
+}
+
 fn read_passphrase(confirm: bool) -> Result<Zeroizing<String>> {
     let p1 = Zeroizing::new(prompt_password("Passphrase: ")?);
     if p1.is_empty() {
@@ -430,6 +454,14 @@ fn desired_chunk_size() -> usize {
     cs
 }
 
+fn chunks_for_len(plaintext_len: u64, chunk_size: u32) -> u64 {
+    if plaintext_len == 0 {
+        0
+    } else {
+        ((plaintext_len - 1) / (chunk_size as u64)) + 1
+    }
+}
+
 fn encrypt_in_place(path: &Path) -> Result<()> {
     refuse_symlink(path)?;
 
@@ -465,6 +497,7 @@ fn encrypt_in_place(path: &Path) -> Result<()> {
 
     let header_without_mac = header.to_bytes_without_mac();
     header.header_mac = compute_header_mac(&header_without_mac, &*k_hdr);
+    drop(k_hdr); // header key no longer needed
 
     // Create temp file in same dir
     let parent = path
@@ -480,56 +513,62 @@ fn encrypt_in_place(path: &Path) -> Result<()> {
     // Write header first
     header.write_all(tmp.as_file_mut())?;
 
+    // Build AEAD — note: chacha20poly1305 v0.10.1 depends on `zeroize`,
+    // so its internal keying material is wiped on Drop. :contentReference[oaicite:1]{index=1}
     let key = Key::from_slice(&*k_enc);
-    let aead = XChaCha20Poly1305::new(key);
+    {
+        let aead = XChaCha20Poly1305::new(key);
 
-    // AAD binds chunks to this file instance.
-    let aad_base = header.header_mac; // 32 bytes
+        // AAD binds chunks to this file instance.
+        let aad_base = header.header_mac; // 32 bytes
 
-    // Encrypt streaming (in-place, detached tag)
-    // NOTE: avoid BufReader for plaintext: no extra plaintext copy persists in memory.
-    let mut reader = in_f;
-    let mut writer = BufWriter::with_capacity(chunk_size, tmp.as_file_mut());
-    let mut buf = Zeroizing::new(vec![0u8; chunk_size]);
+        // Encrypt streaming (in-place, detached tag)
+        // NOTE: avoid BufReader for plaintext: no extra plaintext copy persists in memory.
+        let mut reader = in_f;
+        let mut writer = BufWriter::with_capacity(chunk_size, tmp.as_file_mut());
+        let mut buf = Zeroizing::new(vec![0u8; chunk_size]);
 
-    let mut remaining: u64 = plaintext_len;
-    let mut index: u64 = 0;
+        let mut remaining: u64 = plaintext_len;
+        let mut index: u64 = 0;
 
-    while remaining > 0 {
-        // 32-bit safe: compute on u64 first.
-        let want_u64 = std::cmp::min(remaining, chunk_size as u64);
-        let want = want_u64 as usize;
+        while remaining > 0 {
+            // 32-bit safe: compute on u64 first.
+            let want_u64 = std::cmp::min(remaining, chunk_size as u64);
+            let want = want_u64 as usize;
 
-        reader.read_exact(&mut buf[..want])?;
+            reader.read_exact(&mut buf[..want])?;
 
-        let nonce = make_chunk_nonce(&nonce_seed, index);
-        let mut aad = [0u8; HEADER_MAC_LEN + 8];
-        aad[..HEADER_MAC_LEN].copy_from_slice(&aad_base);
-        aad[HEADER_MAC_LEN..].copy_from_slice(&index.to_le_bytes());
+            let nonce = make_chunk_nonce(&nonce_seed, index);
+            let mut aad = [0u8; HEADER_MAC_LEN + 8];
+            aad[..HEADER_MAC_LEN].copy_from_slice(&aad_base);
+            aad[HEADER_MAC_LEN..].copy_from_slice(&index.to_le_bytes());
 
-        // Encrypt in-place and get detached tag
-        let tag: Tag = aead
-            .encrypt_in_place_detached(&nonce, &aad, &mut buf[..want])
-            .map_err(|_| anyhow!("encryption failure (chunk {})", index))?;
+            // Encrypt in-place and get detached tag
+            let tag: Tag = aead
+                .encrypt_in_place_detached(&nonce, &aad, &mut buf[..want])
+                .map_err(|_| anyhow!("encryption failure (chunk {})", index))?;
 
-        // Write ciphertext body + tag
-        writer.write_all(&buf[..want])?;
-        writer.write_all(tag.as_slice())?;
+            // Write ciphertext body + tag
+            writer.write_all(&buf[..want])?;
+            writer.write_all(tag.as_slice())?;
 
-        // Wipe plaintext (now ciphertext) window
-        buf[..want].zeroize();
+            // Wipe plaintext (now ciphertext) window
+            buf[..want].zeroize();
 
-        index = index
-            .checked_add(1)
-            .ok_or_else(|| anyhow!("chunk counter overflow"))?;
-        remaining = remaining
-            .checked_sub(want_u64)
-            .ok_or_else(|| anyhow!("underflow tracking remaining bytes"))?;
+            index = index
+                .checked_add(1)
+                .ok_or_else(|| anyhow!("chunk counter overflow"))?;
+            remaining = remaining
+                .checked_sub(want_u64)
+                .ok_or_else(|| anyhow!("underflow tracking remaining bytes"))?;
+        }
+
+        // Finish buffered I/O, then drop the writer BEFORE touching tmp.as_file() again.
+        writer.flush()?;
+        drop(writer);
+        // aead dropped here
     }
-
-    // Finish buffered I/O, then drop the writer BEFORE touching tmp.as_file() again.
-    writer.flush()?;
-    drop(writer);
+    drop(k_enc);
 
     // Copy perms late (safer on Windows), then fsync and swap
     copy_perms(path, tmp.as_file())?;
@@ -538,7 +577,7 @@ fn encrypt_in_place(path: &Path) -> Result<()> {
     // Close tmp file handle and turn into a persistent path we can atomically swap in.
     let (tmp_file, tmp_path) = tmp.keep().map_err(|e| anyhow!("persist tmp: {}", e))?;
     drop(tmp_file); // close handle before replace
-    drop(reader); // close source handle (important on Windows)
+    // close source handle (important on Windows) — reader was the File and is already dropped
 
     // Windows ReplaceFileW wants the original existing; POSIX rename replaces.
     if let Err(e) = atomic_replace(&tmp_path, path) {
@@ -555,16 +594,14 @@ fn decrypt_in_place(path: &Path) -> Result<()> {
     refuse_symlink(path)?;
 
     // Open encrypted file safely, lock it, then get its size from the file handle.
-    let in_f = open_file_nofollow_read(path)?;
+    let mut in_f = open_file_nofollow_read(path)?;
     in_f.lock_exclusive().context("lock source file")?;
     let meta = in_f.metadata()?;
     ensure!(meta.len() >= HEADER_LEN as u64, "file too small to be an SFE file");
 
-    // IMPORTANT: single BufReader for both header and body to avoid losing read-ahead bytes.
-    let mut reader = BufReader::with_capacity(DEFAULT_CHUNK_SIZE + AEAD_TAG_LEN, in_f);
-
-    // Read header
-    let header = HeaderV1::read_from(&mut reader).context("read SFE header")?;
+    // Read header directly from the File to avoid wasting a large temporary BufReader,
+    // then wrap the SAME file handle with a right-sized BufReader for the body.
+    let header = HeaderV1::read_from(&mut in_f).context("read SFE header")?;
     if header.alg_id != ALG_XCHACHA20POLY1305 || header.kdf_id != KDF_ARGON2ID {
         bail!("unsupported algorithm/KDF");
     }
@@ -592,79 +629,89 @@ fn decrypt_in_place(path: &Path) -> Result<()> {
 
     // Verify header MAC before writing anything
     let expect = compute_header_mac(&header_without_mac, &*k_hdr);
+    drop(k_hdr);
     if expect.ct_eq(&header.header_mac).unwrap_u8() != 1 {
         bail!("header authentication failed (wrong passphrase or corrupted file)");
     }
 
     // Sanity check: ciphertext size matches expectations (overflow-safe)
+     // Sanity check: ciphertext size matches expectations (overflow-safe)
     let total_len = meta.len();
     let header_len = HEADER_LEN as u64;
     let body_len = total_len.checked_sub(header_len).ok_or_else(|| anyhow!("ciphertext truncated"))?;
-    let cs = header.chunk_size as u64;
-    let total_chunks = if header.plaintext_len == 0 { 0 } else { ((header.plaintext_len - 1) / cs) + 1 };
+    let total_chunks = chunks_for_len(header.plaintext_len, header.chunk_size);
     let tags = (AEAD_TAG_LEN as u64).checked_mul(total_chunks).ok_or_else(|| anyhow!("overflow computing expected ciphertext size"))?;
     let expected_body = header.plaintext_len.checked_add(tags).ok_or_else(|| anyhow!("overflow computing expected ciphertext size"))?;
     ensure!(body_len == expected_body, "ciphertext length mismatch (expected {}, found {})", expected_body, body_len);
 
+
+
+    let cap = (header.chunk_size as usize).saturating_add(AEAD_TAG_LEN);
+    let mut reader = BufReader::with_capacity(cap, in_f);
+
     let key = Key::from_slice(&*k_enc);
-    let aead = XChaCha20Poly1305::new(key);
-    let aad_base = header.header_mac;
+    {
+        let aead = XChaCha20Poly1305::new(key);
+        let aad_base = header.header_mac;
 
-    // Create temp output
-    let parent = path.parent().ok_or_else(|| anyhow!("no parent directory"))?;
-    let mut tmp = TempBuilder::new().prefix(".sfe-").suffix(".tmp").tempfile_in(parent)?;
-    restrict_temp_file_perms(tmp.as_file())?;
-    let mut writer = BufWriter::with_capacity(header.chunk_size as usize, tmp.as_file_mut());
+        // Create temp output
+        let parent = path.parent().ok_or_else(|| anyhow!("no parent directory"))?;
+        let mut tmp = TempBuilder::new().prefix(".sfe-").suffix(".tmp").tempfile_in(parent)?;
+        restrict_temp_file_perms(tmp.as_file())?;
+        let mut writer = BufWriter::with_capacity(header.chunk_size as usize, tmp.as_file_mut());
 
-    // Decrypt streaming (in-place) using the SAME `reader`
-    let mut remaining_plain = header.plaintext_len;
-    let mut index: u64 = 0;
-    let mut buf = Zeroizing::new(vec![0u8; header.chunk_size as usize]);
+        // Decrypt streaming (in-place) using the SAME `reader`
+        let mut remaining_plain = header.plaintext_len;
+        let mut index: u64 = 0;
+        let mut buf = Zeroizing::new(vec![0u8; header.chunk_size as usize]);
 
-    while index < total_chunks {
-        let this_plain_u64 = std::cmp::min(remaining_plain, header.chunk_size as u64);
-        let this_plain = this_plain_u64 as usize;
+        while index < total_chunks {
+            let this_plain_u64 = std::cmp::min(remaining_plain, header.chunk_size as u64);
+            let this_plain = this_plain_u64 as usize;
 
-        // Read ciphertext body then its 16-byte tag
-        reader.read_exact(&mut buf[..this_plain]).context("read ciphertext chunk")?;
-        let mut tag_bytes = [0u8; AEAD_TAG_LEN];
-        reader.read_exact(&mut tag_bytes).context("read ciphertext tag")?;
-        let tag = Tag::from_slice(&tag_bytes);
+            // Read ciphertext body then its 16-byte tag
+            reader.read_exact(&mut buf[..this_plain]).context("read ciphertext chunk")?;
+            let mut tag_bytes = Zeroizing::new([0u8; AEAD_TAG_LEN]);
+            reader.read_exact(&mut *tag_bytes).context("read ciphertext tag")?;
+            let tag = Tag::from_slice(&*tag_bytes);
 
-        let nonce = make_chunk_nonce(&header.nonce_seed, index);
-        let mut aad = [0u8; HEADER_MAC_LEN + 8];
-        aad[..HEADER_MAC_LEN].copy_from_slice(&aad_base);
-        aad[HEADER_MAC_LEN..].copy_from_slice(&index.to_le_bytes());
+            let nonce = make_chunk_nonce(&header.nonce_seed, index);
+            let mut aad = [0u8; HEADER_MAC_LEN + 8];
+            aad[..HEADER_MAC_LEN].copy_from_slice(&aad_base);
+            aad[HEADER_MAC_LEN..].copy_from_slice(&index.to_le_bytes());
 
-        aead.decrypt_in_place_detached(&nonce, &aad, &mut buf[..this_plain], tag)
-            .map_err(|_| anyhow!("decryption failed: wrong passphrase or corrupted chunk {}", index))?;
+            aead.decrypt_in_place_detached(&nonce, &aad, &mut buf[..this_plain], tag)
+                .map_err(|_| anyhow!("decryption failed: wrong passphrase or corrupted chunk {}", index))?;
 
-        writer.write_all(&buf[..this_plain])?;
-        buf[..this_plain].zeroize();
+            writer.write_all(&buf[..this_plain])?;
+            buf[..this_plain].zeroize();
 
-        remaining_plain = remaining_plain
-            .checked_sub(this_plain_u64)
-            .ok_or_else(|| anyhow!("underflow tracking plaintext remaining"))?;
-        index = index
-            .checked_add(1)
-            .ok_or_else(|| anyhow!("chunk counter overflow"))?;
+            remaining_plain = remaining_plain
+                .checked_sub(this_plain_u64)
+                .ok_or_else(|| anyhow!("underflow tracking plaintext remaining"))?;
+            index = index
+                .checked_add(1)
+                .ok_or_else(|| anyhow!("chunk counter overflow"))?;
+        }
+
+        writer.flush()?;
+        drop(writer);
+
+        set_decrypted_perms(path, tmp.as_file())?;
+        fsync_file(tmp.as_file())?;
+
+        let (tmp_file, tmp_path) = tmp.keep().map_err(|e| anyhow!("persist tmp: {}", e))?;
+        drop(tmp_file);
+        drop(reader); // close encrypted source before replacement (important on Windows)
+
+        if let Err(e) = atomic_replace(&tmp_path, path) {
+            let _ = fs::remove_file(&tmp_path);
+            return Err(e);
+        }
+        fsync_dir_of(path)?;
+        // aead dropped here
     }
-
-    writer.flush()?;
-    drop(writer);
-
-    copy_perms(path, tmp.as_file())?;
-    fsync_file(tmp.as_file())?;
-
-    let (tmp_file, tmp_path) = tmp.keep().map_err(|e| anyhow!("persist tmp: {}", e))?;
-    drop(tmp_file);
-    drop(reader); // close encrypted source before replacement (important on Windows)
-
-    if let Err(e) = atomic_replace(&tmp_path, path) {
-        let _ = fs::remove_file(&tmp_path);
-        return Err(e);
-    }
-    fsync_dir_of(path)?;
+    drop(k_enc);
 
     Ok(())
 }
@@ -673,13 +720,13 @@ fn verify_only(path: &Path) -> Result<()> {
     // Like decrypt, but only authenticates header + all chunk tags without writing output.
     refuse_symlink(path)?;
 
-    let in_f = open_file_nofollow_read(path)?;
+    let mut in_f = open_file_nofollow_read(path)?;
     in_f.lock_exclusive().context("lock source file")?;
     let meta = in_f.metadata()?;
     ensure!(meta.len() >= HEADER_LEN as u64, "file too small to be an SFE file");
 
-    let mut reader = BufReader::with_capacity(DEFAULT_CHUNK_SIZE + AEAD_TAG_LEN, in_f);
-    let header = HeaderV1::read_from(&mut reader).context("read SFE header")?;
+    // Read header from File, then right-sized BufReader for body.
+    let header = HeaderV1::read_from(&mut in_f).context("read SFE header")?;
     if header.alg_id != ALG_XCHACHA20POLY1305 || header.kdf_id != KDF_ARGON2ID {
         bail!("unsupported algorithm/KDF");
     }
@@ -697,6 +744,7 @@ fn verify_only(path: &Path) -> Result<()> {
     drop(pass);
 
     let expect = compute_header_mac(&header_without_mac, &*k_hdr);
+    drop(k_hdr);
     if expect.ct_eq(&header.header_mac).unwrap_u8() != 1 {
         bail!("header authentication failed (wrong passphrase or corrupted file)");
     }
@@ -704,44 +752,48 @@ fn verify_only(path: &Path) -> Result<()> {
     // Size check
     let total_len = meta.len();
     let body_len = total_len.checked_sub(HEADER_LEN as u64).ok_or_else(|| anyhow!("ciphertext truncated"))?;
-    let cs = header.chunk_size as u64;
-    let chunks = if header.plaintext_len == 0 { 0 } else { ((header.plaintext_len - 1) / cs) + 1 };
+    let chunks = chunks_for_len(header.plaintext_len, header.chunk_size);
     let tags = (AEAD_TAG_LEN as u64).checked_mul(chunks).ok_or_else(|| anyhow!("overflow computing expected size"))?;
     let expected_body = header.plaintext_len.checked_add(tags).ok_or_else(|| anyhow!("overflow computing expected size"))?;
     ensure!(body_len == expected_body, "ciphertext length mismatch (expected {}, found {})", expected_body, body_len);
 
-    // Auth all chunks
+    let cap = (header.chunk_size as usize).saturating_add(AEAD_TAG_LEN);
+    let mut reader = BufReader::with_capacity(cap, in_f);
+
     let key = Key::from_slice(&*k_enc);
-    let aead = XChaCha20Poly1305::new(key);
-    let aad_base = header.header_mac;
-    let mut remaining_plain = header.plaintext_len;
-    let mut index: u64 = 0;
-    let mut buf = Zeroizing::new(vec![0u8; header.chunk_size as usize]);
+    {
+        let aead = XChaCha20Poly1305::new(key);
+        let aad_base = header.header_mac;
+        let mut remaining_plain = header.plaintext_len;
+        let mut index: u64 = 0;
+        let mut buf = Zeroizing::new(vec![0u8; header.chunk_size as usize]);
 
-    while index < chunks {
-        let this_plain_u64 = std::cmp::min(remaining_plain, header.chunk_size as u64);
-        let this_plain = this_plain_u64 as usize;
+        while index < chunks {
+            let this_plain_u64 = std::cmp::min(remaining_plain, header.chunk_size as u64);
+            let this_plain = this_plain_u64 as usize;
 
-        reader.read_exact(&mut buf[..this_plain]).context("read ciphertext chunk")?;
-        let mut tag_bytes = [0u8; AEAD_TAG_LEN];
-        reader.read_exact(&mut tag_bytes).context("read ciphertext tag")?;
-        let tag = Tag::from_slice(&tag_bytes);
+            reader.read_exact(&mut buf[..this_plain]).context("read ciphertext chunk")?;
+            let mut tag_bytes = Zeroizing::new([0u8; AEAD_TAG_LEN]);
+            reader.read_exact(&mut *tag_bytes).context("read ciphertext tag")?;
+            let tag = Tag::from_slice(&*tag_bytes);
 
-        let nonce = make_chunk_nonce(&header.nonce_seed, index);
-        let mut aad = [0u8; HEADER_MAC_LEN + 8];
-        aad[..HEADER_MAC_LEN].copy_from_slice(&aad_base);
-        aad[HEADER_MAC_LEN..].copy_from_slice(&index.to_le_bytes());
+            let nonce = make_chunk_nonce(&header.nonce_seed, index);
+            let mut aad = [0u8; HEADER_MAC_LEN + 8];
+            aad[..HEADER_MAC_LEN].copy_from_slice(&aad_base);
+            aad[HEADER_MAC_LEN..].copy_from_slice(&index.to_le_bytes());
 
-        // Decrypt-in-place to verify tag; output is discarded.
-        aead.decrypt_in_place_detached(&nonce, &aad, &mut buf[..this_plain], tag)
-            .map_err(|_| anyhow!("verification failed: corrupted chunk {}", index))?;
+            // Decrypt-in-place to verify tag; output is discarded.
+            aead.decrypt_in_place_detached(&nonce, &aad, &mut buf[..this_plain], tag)
+                .map_err(|_| anyhow!("verification failed: corrupted chunk {}", index))?;
 
-        buf[..this_plain].zeroize();
-        remaining_plain = remaining_plain.checked_sub(this_plain_u64).unwrap();
-        index += 1;
+            buf[..this_plain].zeroize();
+            remaining_plain = remaining_plain.checked_sub(this_plain_u64).unwrap();
+            index += 1;
+        }
+        // aead dropped here
     }
+    drop(k_enc);
 
-    println!("OK (verified)");
     Ok(())
 }
 
@@ -768,7 +820,12 @@ fn main() {
 
     match res {
         Ok(()) => {
-            println!("OK");
+            match op.as_str() {
+                "E" | "e" => println!("OK (encrypted)"),
+                "D" | "d" => println!("OK (decrypted)"),
+                "V" | "v" => println!("OK (verified)"),
+                _ => println!("OK"),
+            }
             std::process::exit(0);
         }
         Err(e) => {
