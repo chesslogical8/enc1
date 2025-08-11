@@ -1,0 +1,247 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>serpent1 — Serpent-CBC + HMAC file encryptor</title>
+<style>
+  :root {
+    --bg:#0b1020; --panel:#121833; --ink:#e6e8ef; --muted:#aab0c6; --link:#8fd3ff; --accent:#6ee7b7; --warn:#ffd166; --err:#ff6b6b; --code:#0e1530; --border:#273059;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;padding:0;background:var(--bg);color:var(--ink);font:16px/1.55 ui-sans-serif,system-ui,-apple-system,Segoe UI,Roboto,Ubuntu,Cantarell,"Noto Sans",Arial,"Apple Color Emoji","Segoe UI Emoji"}
+  a{color:var(--link);text-decoration:none} a:hover{text-decoration:underline}
+  code,kbd,pre{font-family:ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono","DejaVu Sans Mono","Courier New", monospace}
+  .wrap{max-width:980px;margin:0 auto;padding:32px 20px}
+  header{margin-bottom:18px}
+  h1{font-size:2rem;line-height:1.2;margin:0 0 8px}
+  h2{font-size:1.35rem;margin:28px 0 10px;padding-top:10px;border-top:1px solid var(--border)}
+  h3{font-size:1.05rem;margin:20px 0 8px}
+  .tag{display:inline-block;padding:2px 8px;border:1px solid var(--border);border-radius:999px;color:var(--muted);font-size:.8rem;margin-right:8px}
+  .panel{background:var(--panel);border:1px solid var(--border);border-radius:14px;padding:16px;margin:14px 0}
+  .muted{color:var(--muted)}
+  .pill{display:inline-block;background:var(--accent);color:#041017;border-radius:999px;padding:2px 10px;font-weight:600;font-size:.8rem}
+  pre{background:var(--code);border:1px solid var(--border);border-radius:10px;padding:12px;overflow:auto}
+  code.inline{background:var(--code);border:1px solid var(--border);border-radius:6px;padding:.1rem .35rem}
+  ul{margin:10px 0 10px 22px}
+  li{margin:4px 0}
+  table{width:100%;border-collapse:collapse;background:var(--panel);border:1px solid var(--border);border-radius:10px;overflow:hidden}
+  th,td{padding:10px;border-bottom:1px solid var(--border);text-align:left}
+  th{color:var(--muted);font-weight:600}
+  .toc a{display:block;padding:6px 0}
+  .callout{border-left:3px solid var(--accent);padding-left:12px;margin:14px 0;color:var(--muted)}
+  .warn{border-left-color:var(--warn)}
+  .err{border-left-color:var(--err)}
+  footer{margin:28px 0;color:var(--muted);font-size:.9rem}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>serpent1</h1>
+    <div class="muted">Serpent-CBC + HMAC-SHA256 with Argon2id key derivation</div>
+    <div style="margin-top:10px">
+      <span class="tag">Cipher: Serpent</span>
+      <span class="tag">Mode: CBC</span>
+      <span class="tag">Auth: HMAC-SHA256</span>
+      <span class="tag">KDF: Argon2id</span>
+      <span class="tag">Platform: Windows &amp; Unix</span>
+    </div>
+  </header>
+
+  <section class="panel">
+    <p><span class="pill">TL;DR</span> <code class="inline">serpent1</code> encrypts and decrypts files with Serpent-CBC, using Argon2id to derive two independent keys (enc+mac) from your password. It authenticates the ciphertext with HMAC-SHA256 (encrypt-then-MAC), verifies before decrypting, supports streaming via stdin/stdout, and offers atomic in-place writes for files.</p>
+  </section>
+
+  <section>
+    <h2 id="toc">Table of contents</h2>
+    <div class="toc">
+      <a href="#features">Features</a>
+      <a href="#install">Install / Build</a>
+      <a href="#usage">Usage</a>
+      <a href="#examples">Examples</a>
+      <a href="#format">File format</a>
+      <a href="#security">Security design</a>
+      <a href="#tuning">Tuning & performance</a>
+      <a href="#compat">Compatibility & OS notes</a>
+      <a href="#troubleshoot">Troubleshooting</a>
+      <a href="#faq">FAQ</a>
+      <a href="#license">License</a>
+    </div>
+  </section>
+
+  <section id="features">
+    <h2>Features</h2>
+    <ul>
+      <li><strong>Serpent</strong> block cipher in CBC mode (16-byte blocks).</li>
+      <li><strong>Encrypt-then-MAC</strong>: HMAC-SHA256 over <code>salt || iv || ciphertext</code>.</li>
+      <li><strong>Argon2id</strong> KDF with pinned parameters; derives <em>two</em> subkeys (enc+mac).</li>
+      <li><strong>Streaming</strong> I/O: handles large files; stdin/stdout supported.</li>
+      <li><strong>Atomic in-place</strong> editing for files via temp + rename (safe on crash).</li>
+      <li><strong>Zeroization</strong> of key material and password in memory.</li>
+      <li><strong>Versioned header</strong> so you can evolve parameters without breaking old files.</li>
+      <li>Windows &amp; Unix support. (Unix gets 0600 perms on temp outputs.)</li>
+    </ul>
+  </section>
+
+  <section id="install">
+    <h2>Install / Build</h2>
+    <h3>Prerequisites</h3>
+    <ul>
+      <li>Rust toolchain (<code>cargo</code>)</li>
+    </ul>
+    <h3>Build</h3>
+<pre><code>cargo build --release
+# binary at target/release/serpent1
+</code></pre>
+  </section>
+
+  <section id="usage">
+    <h2>Usage</h2>
+<pre><code>serpent1 --encrypt   --in &lt;PATH|-&gt; [--out &lt;PATH|-&gt;] [--in-place] [--force]
+serpent1 --decrypt   --in &lt;PATH|-&gt; [--out &lt;PATH|-&gt;] [--in-place] [--force]
+
+Options:
+  -e, --encrypt          Encrypt mode (mutually exclusive with --decrypt)
+  -d, --decrypt          Decrypt mode
+  -i, --in &lt;PATH|-&gt;      Input file or "-" for stdin
+  -o, --out &lt;PATH|-&gt;     Output file or "-" for stdout
+      --in-place         Replace input file atomically (files only)
+      --force            Overwrite an existing output file
+  -h, --help             Show help
+  -V, --version          Show version
+</code></pre>
+
+    <div class="callout warn">
+      <strong>Note:</strong> <code class="inline">--in-place</code> cannot be used with stdin or when <code class="inline">--out</code> is provided.
+    </div>
+  </section>
+
+  <section id="examples">
+    <h2>Examples</h2>
+    <h3>Encrypt a file to a new file</h3>
+<pre><code>serpent1 --encrypt --in secrets.txt --out secrets.enc
+</code></pre>
+
+    <h3>Decrypt back to plaintext</h3>
+<pre><code>serpent1 --decrypt --in secrets.enc --out secrets.txt
+</code></pre>
+
+    <h3>In-place encryption (atomic temp + rename)</h3>
+<pre><code>serpent1 --encrypt --in secrets.txt --in-place
+# secrets.txt becomes encrypted; original replaced atomically
+</code></pre>
+
+    <h3>Streaming via pipelines</h3>
+<pre><code># Encrypt stdin to stdout
+type secrets.txt | serpent1 --encrypt --in - --out - &gt; secrets.enc
+
+# Decrypt stdin to stdout
+type secrets.enc | serpent1 --decrypt --in - --out - &gt; secrets.txt
+</code></pre>
+
+    <h3>Overwrite output if it already exists</h3>
+<pre><code>serpent1 --encrypt --in raw.bin --out raw.enc --force
+</code></pre>
+  </section>
+
+  <section id="format">
+    <h2>File format</h2>
+    <p>All encrypted files begin with a compact binary header:</p>
+<pre><code>[ magic(4) = "SRP1" |
+  version(1) = 0x01 |
+  m_cost_kib(u32 LE) | t_cost(u32 LE) | p_lanes(u32 LE) |
+  salt_len(u8=16) | iv_len(u8=16) |
+  salt(16) | iv(16) |
+  ciphertext(...) | tag(32)
+]
+</code></pre>
+    <ul>
+      <li><strong>ciphertext</strong> is Serpent-CBC with PKCS#7 padding.</li>
+      <li><strong>tag</strong> is HMAC-SHA256 over <code>salt || iv || ciphertext</code>.</li>
+      <li>Header is validated (magic/version/lengths) before any cryptographic work.</li>
+    </ul>
+  </section>
+
+  <section id="security">
+    <h2>Security design</h2>
+    <ul>
+      <li><strong>Argon2id</strong> produces 64 bytes; split into <code>enc_key[32]</code> and <code>mac_key[32]</code>.</li>
+      <li>Per-file random <strong>salt</strong> (16 bytes) and <strong>IV</strong> (16 bytes).</li>
+      <li><strong>Encrypt-then-MAC</strong>: HMAC is verified fully before decryption (for files). For stdin streams, ciphertext is buffered to a temp file and verified prior to decryption.</li>
+      <li>Explicit Argon2 parameters are <em>stored in the header</em> so older files remain decryptable even if defaults change.</li>
+      <li>Secrets in memory are zeroized when possible.</li>
+    </ul>
+    <div class="callout err">
+      <strong>Warning:</strong> This tool relies on password quality. Use strong, unique passwords or a passphrase manager.
+    </div>
+  </section>
+
+  <section id="tuning">
+    <h2>Tuning &amp; performance</h2>
+    <ul>
+      <li>Defaults: <code>m_cost_kib=65536 (64 MiB)</code>, <code>t_cost=3</code>, <code>p_lanes=1</code>.</li>
+      <li>To change defaults, edit <code>DEF_M_COST_KIB</code>, <code>DEF_T_COST</code>, <code>DEF_P_LANES</code> in <code>src/main.rs</code>. Because we store params in the header, changing defaults won’t break existing files.</li>
+      <li>Throughput is primarily bounded by Argon2 memory/time cost (on encryption &amp; decryption) and disk I/O for large files.</li>
+      <li><code>IO_CHUNK</code> (64 KiB) controls streaming block size.</li>
+    </ul>
+  </section>
+
+  <section id="compat">
+    <h2>Compatibility &amp; OS notes</h2>
+    <ul>
+      <li>Windows and Unix are both supported.</li>
+      <li>On Unix, temp output files are created with <code>0600</code> permissions when possible.</li>
+      <li><code>--in-place</code> uses a temp file in the same directory and then <code>rename()</code> for atomicity.</li>
+      <li>Stdin doesn’t support seeking: we write ciphertext to a temp file, verify the tag, then decrypt it.</li>
+    </ul>
+  </section>
+
+  <section id="troubleshoot">
+    <h2>Troubleshooting</h2>
+    <h3>“HMAC verification failed”</h3>
+    <ul>
+      <li>Wrong password, or the file was corrupted/truncated.</li>
+      <li>Ensure you’re decrypting a file produced by this tool (header must be <code>SRP1</code> version 1).</li>
+    </ul>
+
+    <h3>“Invalid PKCS#7 padding”</h3>
+    <ul>
+      <li>This usually means the ciphertext was tampered with or you skipped authentication. Make sure you didn’t remove the trailing 32-byte tag.</li>
+    </ul>
+
+    <h3>“Ciphertext length is not a multiple of block size”</h3>
+    <ul>
+      <li>The file might be incomplete. Copy/download it again.</li>
+    </ul>
+  </section>
+
+  <section id="faq">
+    <h2>FAQ</h2>
+    <h3>Why Serpent instead of AES?</h3>
+    <p>Serpent is a well-studied AES finalist with a conservative design and 128-bit blocks. This project intentionally uses Serpent to explore a non-AES modern cipher with a simple, auditable implementation.</p>
+
+    <h3>Can I change the KDF parameters later?</h3>
+    <p>Yes. Because each file stores <em>its own</em> Argon2 parameters in the header, you may tune the defaults for future files without breaking older ones.</p>
+
+    <h3>Does it support authenticated encryption in one primitive?</h3>
+    <p>We use encrypt-then-MAC (HMAC-SHA256) with a separate MAC key. That provides robust authentication and resists padding-oracle issues by verifying before decrypting (or buffering until verified for streams).</p>
+
+    <h3>What about side-channel hardening / memory wiping?</h3>
+    <p>Keys and passwords are zeroized after use. Full constant-time guarantees depend on upstream crates (serpent, hmac, argon2, sha2). Treat this as a careful but compact tool, not a substitute for a formally audited library.</p>
+  </section>
+
+  <section id="license">
+    <h2>License</h2>
+    <p>Add your preferred license (e.g., MIT or Apache-2.0) to a <code>LICENSE</code> file and mention it here.</p>
+  </section>
+
+  <footer>
+    <p>© <span id="y"></span> serpent1</p>
+  </footer>
+</div>
+<script>
+  document.getElementById('y').textContent = new Date().getFullYear();
+</script>
+</body>
+</html>

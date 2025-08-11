@@ -1,0 +1,25 @@
+[package]
+name = "tf1024"
+version = "1.0.0"
+edition = "2021"
+license = "Apache-2.0 OR MIT"
+authors = ["You <you@example.com>"]
+description = "Production-grade Threefish-1024 file encryption (HKDF+EtM, key-file based)"
+repository = "https://example.com/your/repo"
+
+[dependencies]
+anyhow = "1"
+clap = { version = "4.5", features = ["derive"] }
+rand = "0.8"
+zeroize = { version = "1.8", features = ["zeroize_derive"] }
+tempfile = "3"
+hkdf = "0.12"
+sha2 = "0.10"
+hmac = "0.12"
+threefish = "0.5.2"
+
+[profile.release]
+lto = "fat"
+codegen-units = 1
+opt-level = 3
+panic = "abort"

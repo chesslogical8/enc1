@@ -1,0 +1,29 @@
+[package]
+name    = "aes"
+version = "2.0.0"
+edition = "2021"
+
+[dependencies]
+aes-gcm-siv = "0.11.1"
+anyhow      = "1.0"
+argon2      = { version = "0.5", default-features = false, features = ["std"] }
+clap        = { version = "4.5", features = ["derive"] }
+filetime    = "0.2"
+fs2         = "0.4"
+indicatif   = "0.17"
+rand        = "0.8"
+rpassword   = "7.3"
+subtle      = "2.5"
+tempfile    = "3.10"
+zeroize     = "1.7"
+
+[profile.release]
+lto           = "fat"
+codegen-units = 1
+panic         = "abort"
+strip         = "symbols"
+
+[profile.dev]
+opt-level = 1
+debug = true
+incremental = true

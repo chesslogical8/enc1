@@ -1,0 +1,330 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>lockr – Streaming, Password‑Based File Encryption (Argon2id + XChaCha20‑Poly1305)</title>
+  <style>
+    :root {
+      --bg: #0b0f14;
+      --panel: #0f141a;
+      --text: #e8ecf1;
+      --muted: #9fb0c3;
+      --accent: #66d9ef;
+      --code-bg: #0a0e13;
+      --border: #1a2430;
+      --kbd-bg: #11161d;
+    }
+    html, body { margin: 0; padding: 0; background: var(--bg); color: var(--text); font: 16px/1.6 system-ui, -apple-system, Segoe UI, Roboto, Ubuntu, Cantarell, Noto Sans, Helvetica, Arial, "Apple Color Emoji","Segoe UI Emoji"; }
+    a { color: var(--accent); text-decoration: none; }
+    a:hover { text-decoration: underline; }
+    header { background: linear-gradient(180deg, #111722, #0d1219); border-bottom: 1px solid var(--border); padding: 36px 18px; }
+    header h1 { margin: 0; font-size: 28px; letter-spacing: 0.2px; }
+    header p { margin: 6px 0 0; color: var(--muted); }
+    main { max-width: 980px; margin: 0 auto; padding: 26px 18px 64px; }
+    section { background: var(--panel); border: 1px solid var(--border); border-radius: 12px; padding: 20px; margin: 18px 0; }
+    h2 { margin-top: 0; font-size: 22px; }
+    h3 { font-size: 18px; margin-top: 1.2em; }
+    .muted { color: var(--muted); }
+    code, pre, kbd { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace; }
+    pre { background: var(--code-bg); border: 1px solid var(--border); border-radius: 10px; padding: 14px; overflow: auto; }
+    code { background: var(--code-bg); border: 1px solid var(--border); border-radius: 6px; padding: 0 4px; }
+    kbd { background: var(--kbd-bg); border: 1px solid var(--border); border-bottom-width: 2px; border-radius: 6px; padding: 0 6px; font-size: 0.95em; }
+    ul, ol { margin: 0.4em 0 0.8em 1.3em; }
+    .toc a { display: block; padding: 4px 0; }
+    .badge { display: inline-block; border: 1px solid var(--border); background: #121923; border-radius: 999px; padding: 2px 10px; font-size: 12px; color: var(--muted); margin-right: 8px; }
+    .kv { display: grid; grid-template-columns: 210px 1fr; gap: 4px 16px; }
+    .kv div { padding: 2px 0; }
+    .callout { border-left: 4px solid var(--accent); padding: 10px 14px; background: #0d141e; border-radius: 6px; }
+    .warning { border-left-color: #ffb86c; background: #14110a; }
+    .ok { border-left-color: #98c379; background: #0f150f; }
+    footer { color: var(--muted); text-align: center; margin-top: 36px; }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>lockr – Streaming, Password‑Based File Encryption</h1>
+    <p>Powered by Argon2id key‑stretching and XChaCha20‑Poly1305 AEAD. Simple CLI, strong defaults, production‑friendly.</p>
+  </header>
+  <main>
+    <section>
+      <h2 id="quick-start">Quick start</h2>
+      <div class="kv">
+        <div><span class="badge">Requires</span></div><div>Rust (stable), a CPU with enough RAM for the chosen profile. Windows / macOS / Linux supported.</div>
+        <div><span class="badge">Build</span></div><div><code>cargo build --release</code> (from the project root)</div>
+        <div><span class="badge">Binary</span></div><div><code>./target/release/lockr</code> (or <code>.\target\release\lockr.exe</code> on Windows)</div>
+      </div>
+      <pre><code># Encrypt (paranoid defaults, 1 MiB chunks)
+lockr encrypt ./secret.pdf ./secret.enc
+
+# Decrypt
+lockr decrypt ./secret.enc ./secret.pdf
+
+# If 1 GiB Argon2id is too heavy for your machine:
+lockr encrypt ./big.iso ./big.enc --profile moderate
+
+# Tune chunk size (bounded 1..=64 MiB)
+lockr encrypt ./video.mp4 ./video.enc --chunk-mib 4
+</code></pre>
+      <div class="callout ok"><strong>Defaults you can trust:</strong> <em>Paranoid</em> Argon2id profile (≈1&nbsp;GiB RAM, 4 iterations) and authenticated streaming encryption using XChaCha20‑Poly1305 with unique per‑chunk nonces.</div>
+    </section>
+
+    <section>
+      <h2 id="table-of-contents">Table of contents</h2>
+      <div class="toc">
+        <a href="#what-is-lockr">What is lockr?</a>
+        <a href="#design-overview">Design overview</a>
+        <a href="#installation">Installation</a>
+        <a href="#usage">Usage</a>
+        <a href="#file-format-enc2">File format (ENC2)</a>
+        <a href="#security-properties">Security properties</a>
+        <a href="#threat-model--limitations">Threat model &amp; limitations</a>
+        <a href="#performance--tuning">Performance &amp; tuning</a>
+        <a href="#faq">FAQ</a>
+        <a href="#troubleshooting">Troubleshooting</a>
+        <a href="#contributing--roadmap">Contributing &amp; roadmap</a>
+        <a href="#license">License</a>
+      </div>
+    </section>
+
+    <section id="what-is-lockr">
+      <h2>What is <code>lockr</code>?</h2>
+      <p><code>lockr</code> is a tiny command‑line tool that encrypts and decrypts files using a password. It aims to be:</p>
+      <ul>
+        <li><strong>Simple:</strong> one command to encrypt, one to decrypt.</li>
+        <li><strong>Strong:</strong> modern authenticated encryption (XChaCha20‑Poly1305) and memory‑hard key stretching (Argon2id) with robust defaults.</li>
+        <li><strong>Production‑friendly:</strong> streams large files in constant memory; parameters embedded in the header; explicit integrity checks.</li>
+      </ul>
+      <p>By default it uses a “paranoid” profile that significantly slows down offline password cracking, while remaining a one‑liner to run.</p>
+    </section>
+
+    <section id="design-overview">
+      <h2>Design overview</h2>
+      <h3>Key derivation (password → key)</h3>
+      <ul>
+        <li><strong>Argon2id</strong> with <em>paranoid</em> defaults: ~1&nbsp;GiB memory, 4 iterations, 1 lane. You can switch to <code>--profile moderate</code> (256&nbsp;MiB, 3 iters) or <code>--profile interactive</code> (64&nbsp;MiB, 2 iters).</li>
+        <li>Per‑file <strong>random 32‑byte salt</strong>. The derived key is 32 bytes (256‑bit).</li>
+        <li>Passwords are read with no echo and zeroized in memory when no longer needed.</li>
+      </ul>
+      <h3>Authenticated encryption</h3>
+      <ul>
+        <li><strong>XChaCha20‑Poly1305</strong>, a 256‑bit key AEAD with a 24‑byte nonce.</li>
+        <li><strong>Streaming by default:</strong> the file is processed in fixed‑size chunks (default 1&nbsp;MiB, user‑tunable up to 64&nbsp;MiB). Only one chunk is in memory at a time.</li>
+        <li>Each chunk uses a <strong>unique nonce</strong> formed as <code>nonce = random_prefix_16 || chunk_index_u64_le</code>.</li>
+        <li>Every encryption call includes <strong>AAD</strong> (additional authenticated data) to bind: the header, chunk index, whether it’s the last chunk, and the exact plaintext length of the chunk.</li>
+      </ul>
+      <h3>Tamper detection</h3>
+      <ul>
+        <li>Reorders, drops, or duplicates of chunks are detected via the AAD (index + last flag + known expected lengths).</li>
+        <li>Header tampering is detected because the exact header bytes are included in AAD for every chunk.</li>
+        <li>Trailing garbage after the last chunk is rejected.</li>
+      </ul>
+    </section>
+
+    <section id="installation">
+      <h2>Installation</h2>
+      <h3>From source</h3>
+      <pre><code>git clone &lt;this-repo&gt;
+cd lockr
+cargo build --release
+# optional: install into ~/.cargo/bin
+cargo install --path .
+</code></pre>
+      <p>On Windows, the output binary is at <code>target\release\lockr.exe</code>. On macOS/Linux it’s <code>target/release/lockr</code>.</p>
+      <h3>Prerequisites</h3>
+      <ul>
+        <li>Recent Rust toolchain (<code>rustup</code> recommended).</li>
+        <li>Sufficient RAM for your chosen profile (default is ~1&nbsp;GiB during key derivation).</li>
+      </ul>
+    </section>
+
+    <section id="usage">
+      <h2>Usage</h2>
+      <h3>Encrypt</h3>
+      <pre><code>lockr encrypt &lt;INPUT&gt; &lt;OUTPUT&gt; [--profile interactive|moderate|paranoid] [--chunk-mib N] [--no-confirm]</code></pre>
+      <ul>
+        <li><code>&lt;INPUT&gt;</code> – path to the plaintext file.</li>
+        <li><code>&lt;OUTPUT&gt;</code> – path for the encrypted file (must differ from input).</li>
+        <li><code>--profile</code> – key‑stretching presets:
+          <ul>
+            <li><code>interactive</code> ≈ 64&nbsp;MiB, 2 iterations (fastest)</li>
+            <li><code>moderate</code> ≈ 256&nbsp;MiB, 3 iterations</li>
+            <li><code>paranoid</code> ≈ 1024&nbsp;MiB, 4 iterations (default)</li>
+          </ul>
+        </li>
+        <li><code>--chunk-mib</code> – chunk size in MiB, default 1, max 64.</li>
+        <li><code>--no-confirm</code> – skip the second password prompt.</li>
+      </ul>
+      <h3>Decrypt</h3>
+      <pre><code>lockr decrypt &lt;INPUT.enc&gt; &lt;OUTPUT&gt;</code></pre>
+      <p>Decryption automatically uses the parameters stored in the file header. You only supply the password.</p>
+
+      <h3>Examples</h3>
+      <pre><code># Paranoid defaults (recommended)
+lockr encrypt secrets.db secrets.enc
+
+# Lighter profile for constrained machines
+lockr encrypt archive.tar archive.enc --profile moderate
+
+# Larger chunks can speed up very large files on fast disks
+lockr encrypt footage.mov footage.enc --chunk-mib 8
+
+# Decrypt
+lockr decrypt secrets.enc secrets.db
+</code></pre>
+    </section>
+
+    <section id="file-format-enc2">
+      <h2>File format: <code>ENC2</code> (version 2)</h2>
+      <p>The on‑disk format is simple and self‑describing. All multi‑byte integers are little‑endian. The exact header bytes are used as AAD for every chunk.</p>
+
+      <h3>Header</h3>
+      <pre><code>offset  size  field
+------  ----  -------------------------------------------------------------
+0       4     magic = "ENC2"
+4       1     version = 2
+5       1     alg_id = 1  (XChaCha20-Poly1305)
+6       4     argon2_mem_mib (u32)
+10      4     argon2_iters (u32)
+14      4     argon2_lanes (u32)
+18      4     chunk_size (u32, in bytes; bounded 1..=64 MiB)
+22      8     total_plaintext_len (u64)
+30      1     salt_len (u8)     [recommended 32]
+31      1     nonce_prefix_len (u8) = 16
+32      N     salt (salt_len bytes)
+32+N    16    nonce_prefix (random 16 bytes)
+</code></pre>
+
+      <h3>Chunks</h3>
+      <p>The file body is a sequence of AEAD ciphertext chunks. For chunk index <code>i</code> (starting at 0):</p>
+      <ul>
+        <li><strong>Plaintext length:</strong> <code>min(chunk_size, remaining_plaintext)</code></li>
+        <li><strong>Nonce (24 bytes):</strong> <code>nonce_prefix (16) || i (u64 LE)</code></li>
+        <li><strong>AAD:</strong> <code>header || i (u64 LE) || last_flag (u8) || pt_len (u32 LE)</code></li>
+        <li><strong>Ciphertext length:</strong> <code>pt_len + 16</code> (includes Poly1305 tag)</li>
+      </ul>
+      <p>After the final chunk, the file must end. Trailing data causes decryption to fail.</p>
+    </section>
+
+    <section id="security-properties">
+      <h2>Security properties</h2>
+      <ul>
+        <li><strong>Confidentiality &amp; integrity:</strong> XChaCha20‑Poly1305 AEAD per chunk.</li>
+        <li><strong>Nonce uniqueness:</strong> random 128‑bit prefix + 64‑bit counter virtually eliminates reuse.</li>
+        <li><strong>Header binding:</strong> parameters (argon2 settings, chunk size, total length, salts, prefixes) are authenticated via AAD, so tampering is detected.</li>
+        <li><strong>Strong key stretching:</strong> Argon2id with a large memory cost makes brute force materially expensive.</li>
+        <li><strong>Zeroization:</strong> passwords and sensitive buffers are wiped where practical.</li>
+      </ul>
+      <div class="callout warning"><strong>Important:</strong> Security ultimately depends on your password quality. Use a long, unique passphrase (e.g., 5–7 random words) and avoid reusing passwords.</div>
+    </section>
+
+    <section id="threat-model--limitations">
+      <h2>Threat model &amp; limitations</h2>
+      <h3>What this protects against</h3>
+      <ul>
+        <li>Offline attackers who obtain your ciphertext and try to guess your password.</li>
+        <li>Accidental or malicious file corruption, reordering, truncation, or header tampering.</li>
+      </ul>
+      <h3>What this does <em>not</em> protect against</h3>
+      <ul>
+        <li>Compromised endpoints (malware/Keyloggers, live system access).</li>
+        <li>Side‑channel attacks outside the scope of a typical CLI tool.</li>
+        <li>Metadata leakage: the header reveals Argon2 parameters, chunk size, total plaintext length, and when the file was created (from filesystem metadata).</li>
+        <li>Weak/guessable passwords.</li>
+      </ul>
+      <p>For extremely sensitive use cases, use full‑disk encryption in addition to file‑level encryption and secure operating practices.</p>
+    </section>
+
+    <section id="performance--tuning">
+      <h2>Performance &amp; tuning</h2>
+      <h3>Profiles</h3>
+      <table>
+        <thead><tr><th>Profile</th><th>Memory</th><th>Iterations</th><th>Best for</th></tr></thead>
+        <tbody>
+          <tr><td><code>interactive</code></td><td>≈ 64&nbsp;MiB</td><td>2</td><td>Low‑power or interactive systems</td></tr>
+          <tr><td><code>moderate</code></td><td>≈ 256&nbsp;MiB</td><td>3</td><td>Balanced default on mid‑range machines</td></tr>
+          <tr><td><code>paranoid</code> (default)</td><td>≈ 1&nbsp;GiB</td><td>4</td><td>Maximum resistance to offline cracking</td></tr>
+        </tbody>
+      </table>
+      <h3>Chunk size</h3>
+      <ul>
+        <li>Default is 1&nbsp;MiB. Increasing to 4–16&nbsp;MiB can improve throughput on fast SSDs.</li>
+        <li>Upper bound is 64&nbsp;MiB to avoid pathological header tampering causing huge allocations.</li>
+      </ul>
+      <h3>Memory constraints</h3>
+      <ul>
+        <li>If <code>--profile paranoid</code> fails on your machine (OOM), try <code>--profile moderate</code>.</li>
+        <li>Argon2id memory use is transient during key derivation; streaming encryption itself uses roughly one chunk of RAM.</li>
+      </ul>
+    </section>
+
+    <section id="faq">
+      <h2>FAQ</h2>
+      <h3>Can I recover my data without the password?</h3>
+      <p>No. There is no backdoor and no recovery key. Keep backups of your passwords or a secure password manager.</p>
+
+      <h3>Does changing <code>--chunk-mib</code> affect security?</h3>
+      <p>Not in practice. It affects performance and file layout but not core cryptographic strength. The exact chunk size is authenticated.</p>
+
+      <h3>Why XChaCha20‑Poly1305 instead of AES‑GCM?</h3>
+      <p>XChaCha20 avoids common nonce‑management pitfalls and performs well in software, with a large 24‑byte nonce space.</p>
+
+      <h3>Can I verify an encrypted file without decrypting it?</h3>
+      <p>Partial verification isn’t supported; integrity is checked as you decrypt. You can always decrypt to <code>NUL</code>/<code>/dev/null</code> to validate quickly.</p>
+
+      <h3>Are earlier <code>ENC1</code> files supported?</h3>
+      <p>This build writes and reads <code>ENC2</code> only. If you need to decrypt <code>ENC1</code> files from an earlier version, they can be supported with a small compatibility path.</p>
+    </section>
+
+    <section id="troubleshooting">
+      <h2>Troubleshooting</h2>
+      <h3>“Decryption failed (wrong password or corrupted file)”</h3>
+      <ul>
+        <li>Confirm the password and keyboard layout.</li>
+        <li>Ensure the file wasn’t truncated or modified in transit.</li>
+        <li>The tool also rejects trailing bytes after the final chunk; ensure you’re using the exact file produced by <code>lockr</code>.</li>
+      </ul>
+
+      <h3>“Argon2 memory parameter overflows / out of memory”</h3>
+      <ul>
+        <li>Use <code>--profile moderate</code> or <code>--profile interactive</code>.</li>
+        <li>Close RAM‑heavy apps before running encryption on constrained systems.</li>
+      </ul>
+
+      <h3>Verify round‑trip locally</h3>
+      <pre><code># macOS / Linux
+shasum -a 256 secret.pdf
+lockr encrypt secret.pdf secret.enc
+lockr decrypt secret.enc secret.out.pdf
+shasum -a 256 secret.out.pdf  # hashes should match
+
+# Windows PowerShell
+Get-FileHash secret.pdf -Algorithm SHA256
+lockr encrypt secret.pdf secret.enc
+lockr decrypt secret.enc secret.out.pdf
+Get-FileHash secret.out.pdf -Algorithm SHA256  # hashes should match
+</code></pre>
+    </section>
+
+    <section id="contributing--roadmap">
+      <h2>Contributing &amp; roadmap</h2>
+      <p>Issues and PRs are welcome. Ideas that fit the “simple &amp; strong” ethos:</p>
+      <ul>
+        <li>Optional progress bar (without changing format).</li>
+        <li>Compatibility decryption for <code>ENC1</code>.</li>
+        <li>Keyfile support (in addition to a password) as an opt‑in.</li>
+        <li>Self‑test command that runs an encrypt/decrypt cycle and reports throughput.</li>
+      </ul>
+    </section>
+
+    <section id="license">
+      <h2>License</h2>
+      <p>Dual licensed under your choice of MIT or Apache‑2.0. See <code>LICENSE-MIT</code> and <code>LICENSE-APACHE</code> if present, or adapt to your project’s needs.</p>
+    </section>
+
+    <footer>
+      <p>© 2025 lockr – built with Rust. Stay safe, choose strong passwords, and keep backups.</p>
+    </footer>
+  </main>
+</body>
+</html>

@@ -1,0 +1,22 @@
+[package]
+name = "serpent2"
+version = "0.3.0"
+edition = "2021"
+
+[dependencies]
+clap = { version = "4.5", features = ["derive"] }
+anyhow = "1.0"
+argon2 = { version = "0.5", features = ["password-hash"] }
+serpent = "0.5.1"
+rand = "0.8"
+hmac = "0.12"
+sha2 = "0.10"
+hkdf = "0.12"
+rpassword = "7.3"
+secrecy = "0.8"
+env_logger = "0.11"
+log = "0.4"
+
+# New: safe CBC mode + PKCS7 padding + traits
+cbc = "0.1"
+cipher = "0.4"

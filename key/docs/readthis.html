@@ -1,0 +1,260 @@
+
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>key — deterministic key material generator</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+  :root {
+    --bg: #0e1116; --fg: #e6edf3; --muted: #9da5b4;
+    --accent: #8ab4f8; --border: #2d333b; --code-bg: #161b22;
+    --green: #34d399; --red: #f87171; --yellow: #facc15;
+  }
+  html, body { background: var(--bg); color: var(--fg); font-family: system-ui, -apple-system, Segoe UI, Roboto, Inter, Helvetica, Arial, sans-serif; line-height: 1.55; }
+  main { max-width: 900px; margin: 2rem auto; padding: 0 1rem; }
+  h1, h2, h3 { line-height: 1.2; }
+  h1 { font-size: 2rem; margin: 0 0 0.5rem; }
+  h2 { margin-top: 2rem; border-top: 1px solid var(--border); padding-top: 1.2rem; }
+  h3 { margin-top: 1.2rem; }
+  p, li { color: var(--fg); }
+  .muted { color: var(--muted); }
+  code, pre { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace; }
+  pre { background: var(--code-bg); border: 1px solid var(--border); border-radius: 8px; padding: 1rem; overflow: auto; }
+  code { background: var(--code-bg); border: 1px solid var(--border); border-radius: 6px; padding: 0.1rem 0.35rem; }
+  a { color: var(--accent); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  .kbd { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; background: #111827; border: 1px solid var(--border); border-bottom-width: 3px; border-radius: 6px; padding: 0.05rem 0.4rem; }
+  table { width: 100%; border-collapse: collapse; margin: 1rem 0; }
+  th, td { text-align: left; padding: 0.5rem 0.6rem; border-bottom: 1px solid var(--border); vertical-align: top; }
+  th { color: var(--muted); font-weight: 600; }
+  .ok { color: var(--green); }
+  .warn { color: var(--yellow); }
+  .bad { color: var(--red); }
+  .pill { display: inline-block; border: 1px solid var(--border); border-radius: 999px; padding: 0.1rem 0.55rem; background: #0b1220; color: #b6c6ff; font-size: 0.85rem; }
+  .toc a { display: block; padding: 0.25rem 0; }
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <h1>key</h1>
+    <p class="muted">Deterministic high‑strength key material generator (single‑file app).</p>
+    <p>
+      Generates raw key bytes from <strong>two passwords</strong> using Argon2id and a deterministic stream (<code>blake3</code> or <code>chacha</code>).
+      The second password is hashed into a <em>secret salt/pepper</em> (no base64, no copy/paste).
+      Output is written with <code>0600</code> on Unix or a protected DACL on Windows.
+      <span class="warn">Not a perfect OTP</span> — if you reuse key material or the key is shorter than your data, OTP guarantees do not hold.
+    </p>
+    <p><span class="pill">v3</span> <span class="muted">This release removes <code>--salt</code> / <code>--gen-salt</code> and defaults to a two‑password flow (more secure &amp; more user‑friendly).</span></p>
+  </header>
+
+  <section>
+    <h2>Table of contents</h2>
+    <nav class="toc">
+      <a href="#quickstart">Quick start</a>
+      <a href="#usage">CLI usage</a>
+      <a href="#examples">Examples</a>
+      <a href="#compiletime">Compile‑time configuration</a>
+      <a href="#algorithms">How it works (under the hood)</a>
+      <a href="#security">Security model & caveats</a>
+      <a href="#building">Building</a>
+      <a href="#troubleshooting">Troubleshooting & FAQ</a>
+    </nav>
+  </section>
+
+  <section id="quickstart">
+    <h2>Quick start</h2>
+    <ol>
+      <li><strong>Build</strong> the app (see <a href="#building">Building</a>).</li>
+      <li><strong>Make a key</strong> (size in <em>bytes only</em>):
+        <pre><code># 10 MiB = 10 * 1,048,576 = 10,485,760 bytes
+./key 10485760 -o key.key
+# you'll be prompted for two passwords (the second becomes a secret salt)</code></pre>
+      </li>
+    </ol>
+    <p class="muted">
+      Handy conversions (binary multiples): 1&nbsp;MiB = 1,048,576 bytes; 1&nbsp;GiB = 1,073,741,824 bytes; 20&nbsp;GiB = 21,474,836,480 bytes.
+    </p>
+  </section>
+
+  <section id="usage">
+    <h2>CLI usage</h2>
+    <pre><code>key [SIZE_BYTES] [-o FILE] [--algo blake3|chacha]
+    [--argon2-memory KiB] [--argon2-time N] [--argon2-par N]</code></pre>
+
+    <h3>Positional argument</h3>
+    <table>
+      <tr><th>Arg</th><th>Description</th></tr>
+      <tr>
+        <td><code>SIZE_BYTES</code></td>
+        <td>Output size in <strong>bytes</strong>. Range: <code>1</code> to <code>21,474,836,480</code> (20 GiB).</td>
+      </tr>
+    </table>
+
+    <h3>Flags & options</h3>
+    <table>
+      <tr><th>Flag</th><th>Default</th><th>Description</th></tr>
+      <tr>
+        <td><code>-o</code>, <code>--output &lt;FILE&gt;</code></td>
+        <td><code>key.key</code></td>
+        <td>Output path for raw key bytes. File is written securely (Unix: <code>0600</code>; Windows: protected DACL).</td>
+      </tr>
+      <tr>
+        <td><code>-a</code>, <code>--algo &lt;blake3|chacha&gt;</code></td>
+        <td><code>blake3</code></td>
+        <td>Deterministic stream used to expand the 32‑byte seed into <code>SIZE_BYTES</code> of key material.</td>
+      </tr>
+      <tr>
+        <td><code>--argon2-memory &lt;KiB&gt;</code></td>
+        <td><code>65536</code> (64 MiB)</td>
+        <td>Argon2id memory cost in KiB. Upper bound 4 GiB (4,194,304 KiB).</td>
+      </tr>
+      <tr>
+        <td><code>--argon2-time &lt;N&gt;</code></td>
+        <td><code>3</code></td>
+        <td>Argon2id iterations (time cost).</td>
+      </tr>
+      <tr>
+        <td><code>--argon2-par &lt;N&gt;</code></td>
+        <td><code>0</code> (auto)</td>
+        <td>Argon2id parallelism (lanes). <code>0</code> uses <code>available_parallelism()</code>.</td>
+      </tr>
+    </table>
+
+    <p class="muted">
+      At runtime you’ll be prompted for two passwords: your main password and a second password (“pepper”) that becomes a secret salt. Both require confirmation with a constant‑time compare.
+    </p>
+  </section>
+
+  <section id="examples">
+    <h2>Examples</h2>
+
+    <h3>1) 32‑byte key (BLAKE3 stream)</h3>
+    <pre><code>./key 32 -o key32.bin</code></pre>
+
+    <h3>2) 1 GiB key (ChaCha20 stream)</h3>
+    <pre><code># 1 GiB = 1,073,741,824 bytes
+./key 1073741824 --algo chacha -o key-1g.bin</code></pre>
+
+    <h3>3) Harder KDF (more memory/time)</h3>
+    <pre><code>./key 10485760 \
+  --argon2-memory 262144 \   # 256 MiB
+  --argon2-time 4 \
+  --argon2-par 0 \
+  -o key-10m.bin</code></pre>
+
+    <h3>4) Determinism check</h3>
+    <p>Same two passwords + same Argon2 params + same algorithm ⇒ identical bytes:</p>
+    <pre><code>./key 1000 -o a.bin   # enter the same two passwords...
+./key 1000 -o b.bin
+# Linux/macOS
+cmp a.bin b.bin && echo "identical"
+# Windows PowerShell
+fc /b a.bin b.bin</code></pre>
+  </section>
+
+  <section id="compiletime">
+    <h2>Compile‑time configuration</h2>
+    <p>
+      At the top of <code>src/main.rs</code> there’s a small <code>config</code> module. Tweak these constants and rebuild to change defaults without touching the CLI.
+    </p>
+    <table>
+      <tr><th>Constant</th><th>Default</th><th>Meaning</th></tr>
+      <tr><td><code>DEFAULT_STREAM_ALGO</code></td><td><code>Blake3</code></td><td>Default stream algorithm (<code>blake3</code> or <code>chacha</code>).</td></tr>
+      <tr><td><code>DEFAULT_ARGON2_MEMORY_KIB</code></td><td><code>64 * 1024</code></td><td>Argon2 memory (KiB).</td></tr>
+      <tr><td><code>DEFAULT_ARGON2_TIME</code></td><td><code>3</code></td><td>Argon2 iterations.</td></tr>
+      <tr><td><code>DEFAULT_ARGON2_PAR</code></td><td><code>0</code></td><td>Parallelism lanes; <code>0</code> = auto.</td></tr>
+      <tr><td><code>PEPPER_MIN_CHARS</code></td><td><code>8</code></td><td>Minimum length enforced for the second password (“pepper”).</td></tr>
+      <tr><td><code>KEY_MAX_BYTES</code></td><td><code>20 * 1024 * 1024 * 1024</code></td><td>Hard cap on output size (20 GiB).</td></tr>
+      <tr><td><code>IO_BUF_SIZE</code></td><td><code>1 &lt;&lt; 20</code> (1 MiB)</td><td>Write buffer size.</td></tr>
+      <tr><td><code>SEED_CTX_VERSION</code></td><td><code>"v1"</code></td><td>Domain‑separation/versioning string for derived keys.</td></tr>
+    </table>
+  </section>
+
+  <section id="algorithms">
+    <h2>How it works (under the hood)</h2>
+    <ol>
+      <li><strong>Password entry</strong>: you’re prompted twice; the app uses a constant‑time compare to avoid timing leaks.</li>
+      <li><strong>Secret salt (pepper)</strong>: you enter a second password; it’s transformed into a 32‑byte secret salt via domain‑separated <code>BLAKE3::derive_key</code>. No base64 or copy/paste.</li>
+      <li><strong>KDF (Argon2id)</strong>: derives a 32‑byte seed from <em>password + secret salt</em> with your selected memory/time/parallelism. Memory is provided explicitly via the no‑alloc API and zeroed after use. Upper bound is 4 GiB.</li>
+      <li><strong>Deterministic stream</strong>:
+        <ul>
+          <li><code>blake3</code>: uses <em>keyed</em> BLAKE3 and its XOF to fill buffers deterministically.</li>
+          <li><code>chacha</code>: seeds <code>ChaCha20Rng</code> with the 32‑byte seed and fills buffers.</li>
+        </ul>
+      </li>
+      <li><strong>Secure writeout</strong>:
+        <ul>
+          <li><em>Unix</em>: file perms are set to <code>0600</code> at creation.</li>
+          <li><em>Windows</em>: a protected DACL is applied so only Owner/Admins/SYSTEM have access.</li>
+        </ul>
+      </li>
+    </ol>
+  </section>
+
+  <section id="security">
+    <h2>Security model & caveats</h2>
+    <ul>
+      <li><span class="warn">Not a perfect OTP:</span> A true one‑time pad requires uniformly random key bytes equal in length to the message, used once. Here your bytes are deterministic from two passwords. If you reuse keys or the key is shorter than your data and repeats, you lose OTP guarantees.</li>
+      <li><strong>Two passwords &gt; public salt:</strong> Using a second secret (“pepper”) increases brute‑force cost by multiplying the search space. Choose strong passphrases for <em>both</em> prompts.</li>
+      <li><strong>Parameter hardening:</strong> increase <code>--argon2-memory</code> and/or <code>--argon2-time</code> on powerful machines. Balance performance vs. security; 64–256 MiB at 3–4 iters is a solid starting range.</li>
+      <li><strong>Determinism:</strong> anyone who knows both passwords, the algorithm, and the Argon2 params can regenerate the same key stream.</li>
+      <li><strong>Output file security:</strong> the app locks down permissions, but be mindful of backups, sync tools, and temp dirs.</li>
+    </ul>
+  </section>
+
+  <section id="building">
+    <h2>Building</h2>
+    <p>Requires Rust <code>1.78</code> or newer.</p>
+    <pre><code># Create a new binary crate (if you don't have one)
+cargo new --bin key
+# Add dependencies to Cargo.toml:
+# - clap = { version = "4.5", features = ["derive"] }
+# - argon2 = { version = "0.5", default-features = false }
+# - blake3 = "1.5"
+# - rand = { version = "0.8", default-features = false, features = ["std"] }
+# - rand_chacha = { version = "0.3", default-features = false }
+# - rpassword = "7"
+# - subtle = "2.5"
+# - zeroize = "1"
+# Windows only:
+# - winapi = { version = "0.3", features = ["winnt","aclapi","accctrl","securitybaseapi","handleapi","errhandlingapi","winbase"] }
+
+cargo build --release
+# Run:
+./target/release/key --help</code></pre>
+  </section>
+
+  <section id="troubleshooting">
+    <h2>Troubleshooting & FAQ</h2>
+
+    <h3>“Why two passwords? Is that really more secure?”</h3>
+    <p>Yes. A public salt doesn’t increase the cost per guess; a second secret does. With two passwords, attackers must guess <em>both</em>, multiplying the search space. UX is also better: no base64, no copy/paste.</p>
+
+    <h3>“Second password too short”</h3>
+    <p>The pepper must be at least <code>PEPPER_MIN_CHARS</code> characters (default 8). Use a longer passphrase for real security.</p>
+
+    <h3>“argon2-memory … exceeds 4 GiB limit”</h3>
+    <p>Reduce <code>--argon2-memory</code>. 64–256 MiB is typical for desktops; tune higher if you can tolerate the cost.</p>
+
+    <h3>Performance tips</h3>
+    <ul>
+      <li>Leave <code>--argon2-par</code> at <code>0</code> to auto‑use available cores.</li>
+      <li>Ensure enough RAM for the chosen memory cost.</li>
+      <li><code>blake3</code> is generally faster than <code>chacha</code> for streaming bytes.</li>
+    </ul>
+
+    <h3>What’s the maximum size?</h3>
+    <p>20 GiB (21,474,836,480 bytes). This is enforced at runtime via <code>KEY_MAX_BYTES</code>.</p>
+
+    <h3>Can I reproduce a key later?</h3>
+    <p>Yes — as long as you retain both passwords, the algorithm, and the Argon2 settings. Re-running the same command yields identical bytes.</p>
+  </section>
+
+  <footer style="margin-top:3rem; padding-top:1rem; border-top:1px solid var(--border);">
+    <p class="muted">License: MIT OR Apache‑2.0</p>
+  </footer>
+</main>
+</body>
+</html>

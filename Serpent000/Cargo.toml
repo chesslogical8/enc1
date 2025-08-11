@@ -1,0 +1,16 @@
+[package]
+name = "serpent-tool"
+version = "0.2.1"
+edition = "2021"
+
+[dependencies]
+serpent_crate = { package = "serpent", version = "0.5.1" }
+cbc = "0.1"
+block-padding = "0.3"
+rand = "0.8"
+rand_core = "0.6"
+hmac = "0.12"
+sha2 = "0.10"
+hkdf = "0.12"
+anyhow = "1.0"
+zeroize = "1.7"

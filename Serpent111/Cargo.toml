@@ -1,0 +1,17 @@
+[package]
+name = "serpent1"
+version = "0.2.0"
+edition = "2021"
+
+[dependencies]
+anyhow = "1.0"
+argon2 = "0.5"
+clap = { version = "4.5", features = ["derive"] }
+hmac = "0.12"
+rand = "0.8"
+rpassword = "7.2"
+sha2 = "0.10"
+serpent = "0.5.1"
+zeroize = "1.8"
+
+# We stick to manual CBC to keep deps minimal and fully control padding/streaming.

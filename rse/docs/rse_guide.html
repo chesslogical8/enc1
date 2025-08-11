@@ -1,0 +1,254 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>rse — Rust Safe Encrypt: User Guide</title>
+<style>
+  :root{
+    --bg:#0f1220; --panel:#151931; --text:#e8ebff; --muted:#aab1d9;
+    --accent:#7c9cff; --accent-2:#a3ffd6; --danger:#ff8a8a; --ok:#9dffa1;
+    --code-bg:#0b0e1a; --kbd-bg:#222845; --border:#2a2f55;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;padding:0;background:var(--bg);color:var(--text);font:16px/1.6 system-ui,-apple-system,Segoe UI,Roboto,Inter,Helvetica,Arial,sans-serif}
+  a{color:var(--accent)}
+  .container{max-width:980px;margin:0 auto;padding:32px}
+  header{display:flex;gap:16px;align-items:center;margin-bottom:16px}
+  header h1{font-size:28px;line-height:1.2;margin:0}
+  header .version{color:var(--muted);font-weight:600}
+  .panel{background:var(--panel);border:1px solid var(--border);border-radius:16px;padding:20px;margin:18px 0;box-shadow:0 6px 24px rgba(0,0,0,.25)}
+  .two-col{display:grid;grid-template-columns:1fr;gap:14px}
+  @media (min-width:900px){.two-col{grid-template-columns:1.2fr .8fr}}
+  h2{margin:12px 0 6px;font-size:22px}
+  h3{margin:18px 0 8px;font-size:18px}
+  .muted{color:var(--muted)}
+  .tag{display:inline-block;padding:2px 8px;border:1px solid var(--border);border-radius:999px;font-size:12px;color:var(--muted);margin-right:6px}
+  code,pre{font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace}
+  pre{background:var(--code-bg);border:1px solid var(--border);padding:14px;border-radius:12px;overflow:auto}
+  kbd{background:var(--kbd-bg);border:1px solid var(--border);border-bottom-color:#0003;border-radius:6px;padding:2px 6px;font-size:12px}
+  .toc{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}
+  .toc a{display:block;background:var(--panel);border:1px solid var(--border);padding:10px 12px;border-radius:10px;text-decoration:none;color:var(--text)}
+  .callout{border-left:4px solid var(--accent);padding:10px 12px;background:rgba(124,156,255,.08);border-radius:8px}
+  .ok{border-left-color:var(--ok);background:rgba(157,255,161,.06)}
+  .warn{border-left-color:var(--danger);background:rgba(255,138,138,.06)}
+  table{width:100%;border-collapse:collapse;border:1px solid var(--border);background:var(--panel);border-radius:12px;overflow:hidden}
+  th,td{border-bottom:1px solid var(--border);padding:10px 12px;text-align:left;vertical-align:top}
+  th{background:rgba(255,255,255,.03)}
+  tr:last-child td{border-bottom:none}
+  .footer{color:var(--muted);font-size:14px;margin-top:24px}
+  .tiny{font-size:12px;color:var(--muted)}
+</style>
+</head>
+<body>
+  <div class="container">
+    <header>
+      <svg width="36" height="36" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+        <path d="M12 2l8 4.5v10.9L12 22l-8-4.6V6.5L12 2z" stroke="url(#g1)" stroke-width="1.3" fill="none"/>
+        <path d="M12 7l5 2.8v6.2L12 19l-5-3V9.8L12 7z" stroke="url(#g2)" stroke-width="1.1" fill="none"/>
+        <defs>
+          <linearGradient id="g1" x1="0" x2="24" y1="0" y2="24"><stop stop-color="#7c9cff"/><stop offset="1" stop-color="#a3ffd6"/></linearGradient>
+          <linearGradient id="g2" x1="0" x2="24" y1="0" y2="24"><stop stop-color="#a3ffd6"/><stop offset="1" stop-color="#7c9cff"/></linearGradient>
+        </defs>
+      </svg>
+      <div>
+        <h1>rse — Rust Safe Encrypt</h1>
+        <div class="version">Single-file, Windows &amp; Linux CLI • v0.1.0</div>
+      </div>
+    </header>
+
+    <div class="panel two-col">
+      <div>
+        <p><strong>rse</strong> is a small command‑line tool for chunked, authenticated file encryption using sensible, misuse‑resistant defaults.</p>
+        <div class="callout ok">
+          Default suite: <strong>XChaCha20‑Poly1305</strong> (AEAD) + <strong>HKDF‑SHA512</strong> (subkeys) + <strong>Argon2id</strong> (KDF) + <strong>BLAKE3</strong> (MAC &amp; trailer hash).
+        </div>
+        <p class="muted tiny">Security model: protects confidentiality & integrity of files at rest and in transit/storage. It cannot protect data on a compromised machine at the moment of use.</p>
+      </div>
+      <div>
+        <div class="callout">
+          <strong>Quick Build</strong><br/>
+          <code>cargo build --release</code><br/>
+          Linux: <code>./target/release/rse --help</code><br/>
+          Windows: <code>.\target\release\rse.exe --help</code>
+        </div>
+      </div>
+    </div>
+
+    <div class="panel">
+      <h2 id="toc">Table of Contents</h2>
+      <div class="toc">
+        <a href="#install">Install / Build</a>
+        <a href="#quickstart">Quick Start</a>
+        <a href="#commands">Commands &amp; Options</a>
+        <a href="#examples">Examples</a>
+        <a href="#format">File Format (Header &amp; Trailer)</a>
+        <a href="#kdf">KDF Tuning</a>
+        <a href="#security">Security Notes</a>
+        <a href="#troubleshooting">Troubleshooting</a>
+      </div>
+    </div>
+
+    <div id="install" class="panel">
+      <h2>Install / Build</h2>
+      <ol>
+        <li>Ensure you have <a href="https://rustup.rs/" target="_blank" rel="noopener">Rust &amp; Cargo</a> installed.</li>
+        <li>Create a new folder, put the provided <code>Cargo.toml</code> and <code>src/main.rs</code> there.</li>
+        <li>Run <code>cargo build --release</code>.</li>
+      </ol>
+      <p>Binary path: <code>target/release/rse</code> (Linux/macOS) or <code>target\release\rse.exe</code> (Windows).</p>
+    </div>
+
+    <div id="quickstart" class="panel">
+      <h2>Quick Start</h2>
+<pre><code># Encrypt a file (prompts twice for passphrase)
+rse encrypt -i secret.pdf -o secret.pdf.rse
+
+# Decrypt a file (prompts for passphrase)
+rse decrypt -i secret.pdf.rse -o secret.pdf
+
+# Inspect header only (no decryption)
+rse inspect -i secret.pdf.rse
+
+# Verify integrity end-to-end (decrypts in RAM and checks trailer hash)
+rse verify  -i secret.pdf.rse</code></pre>
+    </div>
+
+    <div id="commands" class="panel">
+      <h2>Commands &amp; Options</h2>
+
+      <h3><span class="tag">encrypt</span> Encrypt a file with a passphrase</h3>
+      <table>
+        <tr><th>Flag</th><th>Description</th></tr>
+        <tr><td><code>-i</code>, <code>--input &lt;PATH&gt;</code></td><td>Input file to encrypt (required)</td></tr>
+        <tr><td><code>-o</code>, <code>--output &lt;PATH&gt;</code></td><td>Output path (default: <code>&lt;input&gt;.rse</code>)</td></tr>
+        <tr><td><code>--chunk-mib &lt;N&gt;</code></td><td>Chunk size in MiB (default: 4)</td></tr>
+        <tr><td><code>--force</code></td><td>Overwrite output if it exists</td></tr>
+        <tr><td><code>--kdf-mib &lt;N&gt;</code></td><td>Argon2 memory, MiB (default: 512; min 64, max 2048)</td></tr>
+        <tr><td><code>--kdf-iters &lt;N&gt;</code></td><td>Argon2 iterations/time cost (default: 3; min 1, max 10)</td></tr>
+        <tr><td><code>--kdf-par &lt;N&gt;</code></td><td>Argon2 parallelism/lanes (default: 1; min 1, max 8)</td></tr>
+      </table>
+      <p class="tiny muted">During encryption, you will be prompted for a passphrase twice to confirm.</p>
+
+      <h3><span class="tag">decrypt</span> Decrypt a file</h3>
+      <table>
+        <tr><th>Flag</th><th>Description</th></tr>
+        <tr><td><code>-i</code>, <code>--input &lt;PATH&gt;</code></td><td>Input encrypted file (required)</td></tr>
+        <tr><td><code>-o</code>, <code>--output &lt;PATH&gt;</code></td><td>Decrypted output path (default: strip <code>.rse</code> or append <code>.dec</code>)</td></tr>
+        <tr><td><code>--force</code></td><td>Overwrite output if it exists</td></tr>
+      </table>
+
+      <h3><span class="tag">inspect</span> Inspect header without decrypting</h3>
+      <table>
+        <tr><th>Flag</th><th>Description</th></tr>
+        <tr><td><code>-i</code>, <code>--input &lt;PATH&gt;</code></td><td>Encrypted file to inspect</td></tr>
+      </table>
+
+      <h3><span class="tag">verify</span> Verify encrypted file end-to-end</h3>
+      <table>
+        <tr><th>Flag</th><th>Description</th></tr>
+        <tr><td><code>-i</code>, <code>--input &lt;PATH&gt;</code></td><td>Encrypted file to verify</td></tr>
+      </table>
+    </div>
+
+    <div id="examples" class="panel">
+      <h2>Examples</h2>
+<pre><code># 1) Encrypt with defaults (4 MiB chunks, Argon2id m=512MiB t=3 p=1)
+rse encrypt -i db.sqlite -o db.sqlite.rse
+
+# 2) Faster KDF for a slow box (lower memory, fewer iters)
+rse encrypt -i video.mov -o video.mov.rse --kdf-mib 128 --kdf-iters 2
+
+# 3) Beefy settings for a highly sensitive file
+rse encrypt -i secrets.zip -o secrets.zip.rse --kdf-mib 1024 --kdf-iters 4 --kdf-par 2
+
+# 4) Different chunk size (e.g., for slow media)
+rse encrypt -i backup.tar -o backup.tar.rse --chunk-mib 8
+
+# 5) Decrypt to default name (strips .rse -> original name)
+rse decrypt -i backup.tar.rse
+
+# 6) Inspect metadata (no passphrase needed to read header)
+rse inspect -i backup.tar.rse
+
+# 7) Verify integrity (auth-decrypt in RAM + trailer hash)
+rse verify -i backup.tar.rse</code></pre>
+    </div>
+
+    <div id="format" class="panel">
+      <h2>File Format (Header &amp; Trailer)</h2>
+      <p>The file begins with a binary header, followed by AEAD-encrypted chunks, and ends with a trailer that contains the plaintext BLAKE3 hash.</p>
+      <h3>Header (serialized, little‑endian)</h3>
+      <table>
+        <tr><th>Field</th><th>Size</th><th>Description</th></tr>
+        <tr><td>MAGIC</td><td>8 bytes</td><td><code>"RSE1v1\0\0"</code></td></tr>
+        <tr><td>version</td><td>2</td><td>Currently <code>1</code></td></tr>
+        <tr><td>suite_id</td><td>2</td><td><code>1</code> = XChaCha20‑Poly1305 + HKDF‑SHA512 + Argon2id</td></tr>
+        <tr><td>flags</td><td>4</td><td>Reserved (0)</td></tr>
+        <tr><td>uuid</td><td>16</td><td>Random file UUID</td></tr>
+        <tr><td>chunk_size</td><td>4</td><td>In bytes (multiple of 1024)</td></tr>
+        <tr><td>plaintext_size</td><td>8</td><td>Total bytes of original file</td></tr>
+        <tr><td>kdf_m_kib</td><td>4</td><td>Argon2 memory in KiB (bounds: 64MiB..2GiB)</td></tr>
+        <tr><td>kdf_t_cost</td><td>4</td><td>Argon2 time cost/iterations (1..10)</td></tr>
+        <tr><td>kdf_parallelism</td><td>4</td><td>Argon2 lanes/parallelism (1..8)</td></tr>
+        <tr><td>salt</td><td>16</td><td>Argon2 salt</td></tr>
+        <tr><td>wrap_nonce</td><td>24</td><td>XChaCha20-Poly1305 nonce for wrapped key</td></tr>
+        <tr><td>wrapped_key_len</td><td>2</td><td>Length of <code>wrapped_key</code> (should be 48)</td></tr>
+        <tr><td>wrapped_key</td><td>var</td><td>AEAD(Kek, wrap_nonce, AD=suite_id||uuid, file_key)</td></tr>
+        <tr><td>header_mac</td><td>32</td><td>BLAKE3 keyed hash over the preceding header bytes<br/><span class="tiny">Key = HKDF‑SHA512(file_key, "rse.header.mac")</span></td></tr>
+      </table>
+
+      <h3>Chunks</h3>
+      <p>The plaintext is processed in chunks of <code>chunk_size</code>. For each chunk <em>i</em>:</p>
+      <ul>
+        <li>Derive a unique subkey: <code>HKDF‑SHA512(file_key, "rse.chunk" || i)</code></li>
+        <li>Use a constant zero nonce (<code>24</code> bytes) with XChaCha20‑Poly1305</li>
+        <li>Associated data binds: <code>suite_id || uuid || idx || total_chunks || plaintext_size || chunk_size</code></li>
+        <li>Write ciphertext (PT + 16‑byte tag)</li>
+      </ul>
+
+      <h3>Trailer</h3>
+      <table>
+        <tr><th>Field</th><th>Size</th><th>Description</th></tr>
+        <tr><td>TRAILER_MAGIC</td><td>8</td><td><code>"RSE1TRLR"</code></td></tr>
+        <tr><td>BLAKE3(plaintext)</td><td>32</td><td>Digest of original plaintext</td></tr>
+      </table>
+    </div>
+
+    <div id="kdf" class="panel">
+      <h2>KDF Tuning</h2>
+      <p>Passphrases are stretched with <strong>Argon2id</strong> to derive a 32‑byte KEK for wrapping the per‑file encryption key.</p>
+      <ul>
+        <li>Default: <code>m=512&nbsp;MiB</code>, <code>t=3</code>, <code>p=1</code></li>
+        <li>Bounds enforced: <code>64&nbsp;MiB ≤ m ≤ 2048&nbsp;MiB</code>, <code>1 ≤ t ≤ 10</code>, <code>1 ≤ p ≤ 8</code></li>
+        <li>Decrease <kbd>--kdf-mib</kbd> or <kbd>--kdf-iters</kbd> if encryption feels too slow on your machine.</li>
+        <li>Increase them for higher offline attack resistance if your hardware can handle it.</li>
+      </ul>
+    </div>
+
+    <div id="security" class="panel">
+      <h2>Security Notes</h2>
+      <ul>
+        <li>Header is authenticated twice: the <em>wrapped key</em> is tied to <code>suite_id||uuid</code> via AEAD AD, and the whole header is protected by a keyed BLAKE3 MAC derived from the file key.</li>
+        <li>Each chunk uses a <em>different key</em> via HKDF; using a constant nonce is safe under unique keys.</li>
+        <li>Trailer hash allows end‑to‑end verification of the decrypted plaintext.</li>
+        <li>Atomic I/O: data is written to <code>.part</code>, fsync’d, then atomically renamed to final path. On Windows, directory fsync is a no‑op, but files are still fsync’d.</li>
+        <li>As with any passphrase‑based tool, choose a strong, unique passphrase. Consider a manager‑generated one.</li>
+        <li>Secure deletion on SSDs is unreliable; prefer full‑disk encryption or device‑level sanitization for destruction.</li>
+      </ul>
+    </div>
+
+    <div id="troubleshooting" class="panel">
+      <h2>Troubleshooting</h2>
+      <ul>
+        <li><strong>“output exists; pass --force to overwrite”</strong> — Add <kbd>--force</kbd> or choose a different output path.</li>
+        <li><strong>“authentication failed”</strong> — Wrong passphrase or file corruption. Double‑check the passphrase and verify with <code>rse verify -i &lt;file.rse&gt;</code>.</li>
+        <li><strong>“kdf memory/iters/parallelism out of range”</strong> — Values must respect the enforced bounds (see <a href="#kdf">KDF Tuning</a>).</li>
+        <li><strong>Slow on low‑RAM systems</strong> — Reduce <kbd>--kdf-mib</kbd> (e.g., 128) or <kbd>--kdf-iters</kbd> (e.g., 2).</li>
+      </ul>
+    </div>
+
+    <p class="footer">rse v0.1.0 • XChaCha20‑Poly1305 • HKDF‑SHA512 • Argon2id • BLAKE3</p>
+  </div>
+</body>
+</html>

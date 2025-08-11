@@ -1,0 +1,375 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>OTP – Simple in‑place OTP‑style XOR Utility</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <style>
+    :root {
+      --fg: #1f2937;
+      --bg: #ffffff;
+      --muted: #6b7280;
+      --accent: #2563eb;
+      --ok: #16a34a;
+      --warn: #b45309;
+      --err: #b91c1c;
+      --border: #e5e7eb;
+      --code-bg: #0b1020;
+      --code-fg: #e6edf3;
+    }
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --fg: #e5e7eb;
+        --bg: #0b1020;
+        --muted: #9ca3af;
+        --accent: #60a5fa;
+        --ok: #22c55e;
+        --warn: #f59e0b;
+        --err: #f87171;
+        --border: #1f2937;
+        --code-bg: #0b1020;
+        --code-fg: #e6edf3;
+      }
+    }
+    html, body { margin:0; padding:0; }
+    body {
+      font: 16px/1.6 system-ui, -apple-system, Segoe UI, Roboto, Ubuntu, Cantarell, Noto Sans, Helvetica, Arial, "Apple Color Emoji", "Segoe UI Emoji";
+      color: var(--fg);
+      background: var(--bg);
+    }
+    .container { max-width: 980px; margin: 0 auto; padding: 40px 20px 80px; }
+    h1 { font-size: 2rem; margin: 0 0 0.5rem; }
+    h2 { margin-top: 2rem; margin-bottom: 0.75rem; }
+    h3 { margin-top: 1.25rem; margin-bottom: 0.5rem; }
+    p { margin: 0.5rem 0 0.75rem; }
+    code, pre, kbd { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace; }
+    pre {
+      background: var(--code-bg);
+      color: var(--code-fg);
+      padding: 14px 16px;
+      border-radius: 8px;
+      overflow: auto;
+      border: 1px solid var(--border);
+    }
+    code { background: rgba(99,102,241,0.08); padding: 0.15em 0.35em; border-radius: 6px; }
+    a { color: var(--accent); text-decoration: none; }
+    a:hover { text-decoration: underline; }
+    nav.toc { border: 1px solid var(--border); border-radius: 8px; padding: 12px 14px; background: rgba(37,99,235,0.06); }
+    nav.toc ul { margin: 8px 0 0 18px; }
+    .callout {
+      border-left: 4px solid var(--accent);
+      padding: 10px 12px;
+      background: rgba(37,99,235,0.06);
+      border-radius: 6px;
+      margin: 1rem 0;
+    }
+    .ok { border-left-color: var(--ok); background: rgba(22,163,74,0.08); }
+    .warn { border-left-color: var(--warn); background: rgba(180,83,9,0.08); }
+    .err { border-left-color: var(--err); background: rgba(185,28,28,0.08); }
+    table { width: 100%; border-collapse: collapse; margin: 0.5rem 0 1rem; }
+    th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--border); vertical-align: top; }
+    th { background: rgba(148,163,184,0.15); }
+    footer { margin-top: 3rem; color: var(--muted); font-size: 0.9rem; }
+    .muted { color: var(--muted); }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <header>
+      <h1>OTP – Simple in‑place OTP‑style XOR Utility</h1>
+      <p class="muted">Version 0.7.0 • MIT OR Apache‑2.0 • Rust 1.78+</p>
+    </header>
+
+    <nav class="toc">
+      <strong>Contents</strong>
+      <ul>
+        <li><a href="#overview">Overview</a></li>
+        <li><a href="#quick-start">Quick start</a></li>
+        <li><a href="#usage">Usage</a></li>
+        <li><a href="#behavior">Key length behavior</a></li>
+        <li><a href="#security-notes">Security notes (important)</a></li>
+        <li><a href="#safety-model">Safety model</a></li>
+        <li><a href="#install">Install &amp; build</a></li>
+        <li><a href="#dependencies">Dependencies (and how to slim)</a></li>
+        <li><a href="#errors">Common errors &amp; fixes</a></li>
+        <li><a href="#troubleshooting">Troubleshooting</a></li>
+        <li><a href="#how-it-works">How it works (implementation)</a></li>
+        <li><a href="#faq">FAQ</a></li>
+        <li><a href="#license">License</a></li>
+        <li><a href="#changelog">Changelog</a></li>
+      </ul>
+    </nav>
+
+    <section id="overview">
+      <h2>Overview</h2>
+      <p><strong>OTP</strong> is a tiny command‑line tool that XOR‑transforms a file using bytes from <code>key.key</code>. It is intentionally simple and hard to misuse:</p>
+      <ul>
+        <li>Always encrypts <strong>in place</strong> via a safe temporary file + atomic replace.</li>
+        <li><strong>Requires</strong> <code>key.key</code> to be present in the <em>same directory</em> as the executable and the input file.</li>
+        <li>Key bytes <strong>wrap</strong> if shorter than the file; if key is long enough, it’s <em>1:1 byte‑for‑byte</em> with no wrapping.</li>
+        <li>XOR is symmetric: running OTP again with the same key restores the original file.</li>
+      </ul>
+      <div class="callout warn">
+        <strong>Heads up:</strong> XOR with a <em>repeating</em> key is not a perfect one‑time pad. For true OTP guarantees, the key must be uniformly random, at least as long as the message, kept secret, and used only once.
+      </div>
+    </section>
+
+    <section id="quick-start">
+      <h2>Quick start</h2>
+      <ol>
+        <li>Place <code>otp.exe</code> (Windows) or <code>otp</code> (Linux/macOS), your target file (e.g., <code>example.txt</code>), and <code>key.key</code> in the <strong>same folder</strong>.</li>
+        <li>Open a terminal in that folder.</li>
+        <li>Run:</li>
+      </ol>
+      <pre><code># Windows (PowerShell/cmd), Linux, or macOS — same command:
+./otp example.txt
+</code></pre>
+      <p>This transforms <code>example.txt</code> in place using <code>key.key</code>. Run the same command again to get the original back. <em>Optional:</em> verify with a hash (<code>shasum</code> / <code>certutil -hashfile</code>) before/after.</p>
+    </section>
+
+    <section id="usage">
+      <h2>Usage</h2>
+      <pre><code>Usage: otp &lt;INPUT&gt;
+
+Positional arguments:
+  INPUT   Path to the file to transform.
+          If relative, it is resolved relative to the executable's directory.
+
+Requirements:
+  - key.key must exist next to the executable.
+  - INPUT must be in the same directory as the executable.
+</code></pre>
+      <p><em>Note:</em> Relative paths are resolved relative to the executable’s directory, <strong>not</strong> the current working directory.</p>
+      <h3>Examples</h3>
+      <pre><code># Encrypt/decrypt example.txt in place
+./otp example.txt
+
+# Different folder? Move all three next to each other:
+#   C:\secure\otp.exe, C:\secure\example.txt, C:\secure\key.key
+# then run:
+C:\secure&gt; .\otp.exe example.txt
+</code></pre>
+    </section>
+
+    <section id="behavior">
+      <h2>Key length behavior</h2>
+      <ul>
+        <li><strong>Key ≥ file size:</strong> OTP reads exactly one key byte for every file byte. No wrap occurs; mapping is strictly byte‑for‑byte.</li>
+        <li><strong>Key shorter than file:</strong> OTP reads until it hits EOF on the key, then seeks back to the start and continues (wrap). This repeats as needed until the file is done.</li>
+      </ul>
+      <p>The logic ensures that chunked I/O is still correct: the key file handle’s position is preserved across chunks, and wrapping only occurs when EOF is actually reached.</p>
+    </section>
+
+    <section id="security-notes">
+      <h2>Security notes (important)</h2>
+      <div class="callout err">
+        <p><strong>Do not reuse keys across different files</strong> if you care about confidentiality. Reusing a short (wrapping) key across messages enables classical XOR attacks.</p>
+      </div>
+      <ul>
+        <li>For true one‑time‑pad properties: generate a <em>uniformly random</em> key that is at least as long as the file, use it once, and destroy it afterwards.</li>
+        <li>Prefer generating keys with a CSPRNG:
+          <ul>
+            <li><em>Linux/macOS:</em> <code>head -c 1048576 /dev/urandom &gt; key.key</code> (example: 1&nbsp;MiB)</li>
+            <li><em>Windows PowerShell:</em>
+              <pre><code>[byte[]]$b = New-Object byte[] 1048576
+[System.Security.Cryptography.RandomNumberGenerator]::Create().GetBytes($b)
+[IO.File]::WriteAllBytes("key.key", $b)</code></pre>
+            </li>
+            <li><em>Cross‑platform (OpenSSL):</em> <code>openssl rand -out key.key 1048576</code></li>
+          </ul>
+        </li>
+        <li>Store keys securely; back them up if you might need to decrypt later.</li>
+      </ul>
+    </section>
+
+    <section id="safety-model">
+      <h2>Safety model</h2>
+      <ul>
+        <li><strong>Same‑directory rule:</strong> executable, input file, and <code>key.key</code> must be siblings. This reduces “wrong path” accidents and makes Windows/mac/Linux behavior consistent.</li>
+        <li><strong>In‑place via temp + atomic replace:</strong> OTP writes to a temporary file in the same directory, flushes and syncs it, then atomically replaces the original:
+          <ul>
+            <li><em>Windows:</em> uses <code>ReplaceFileW</code> with write‑through; destination metadata/ACLs are preserved.</li>
+            <li><em>Unix:</em> uses same‑dir <code>rename()</code> and fsyncs the directory for crash durability.</li>
+          </ul>
+        </li>
+        <li><strong>Cleanup on failure:</strong> a guard deletes the temp file if anything goes wrong before replacement.</li>
+        <li><strong>Locks:</strong> input is locked exclusively; key is locked shared; temp output is locked exclusively, limiting races with other processes.</li>
+        <li><strong>Buffer hygiene:</strong> data and key buffers are zeroized after each write to reduce the lifetime of sensitive bytes in RAM.</li>
+        <li><strong>Windows hardening:</strong> temp file ACLs are tightened so only Owner/Admins/SYSTEM retain access during the operation.</li>
+        <li><strong>Hard‑link safety:</strong> refuses to operate on <code>key.key</code> or the executable—even if referenced via hard links.</li>
+      </ul>
+      <div class="callout ok">
+        <strong>Tip:</strong> While in‑place is convenient, you should still keep a backup or test on a copy first—especially with critical data.
+      </div>
+    </section>
+
+    <section id="install">
+      <h2>Install &amp; build</h2>
+      <h3>Prerequisites</h3>
+      <ul>
+        <li>Rust 1.78+ (<code>rustup</code> recommended)</li>
+        <li>Windows, macOS, or Linux</li>
+      </ul>
+      <h3>Build</h3>
+      <pre><code>git clone &lt;your repo&gt; otp
+cd otp
+cargo build --release
+# Binaries:
+#   target/release/otp     (macOS/Linux)
+#   target/release/otp.exe (Windows)
+</code></pre>
+      <h3>Layout for use</h3>
+      <pre><code># Place these three together:
+otp[.exe]
+example.txt
+key.key
+</code></pre>
+      <p>Then run: <code>./otp example.txt</code></p>
+    </section>
+
+    <section id="dependencies">
+      <h2>Dependencies (and how to slim)</h2>
+      <table>
+        <thead><tr><th>Crate</th><th>Why it’s used</th><th>Can I remove it?</th></tr></thead>
+        <tbody>
+          <tr><td><code>clap</code></td><td>Parses the positional input argument.</td><td>Possible but not recommended; you’d hand‑roll <code>std::env::args()</code>.</td></tr>
+          <tr><td><code>anyhow</code></td><td>Friendly errors with context.</td><td>Optional; replace with <code>Result&lt;(), Box&lt;dyn Error&gt;&gt;</code> and manual <code>map_err</code>s.</td></tr>
+          <tr><td><code>tempfile</code></td><td>Safe temp file in same dir before atomic replace.</td><td><strong>Keep.</strong> It’s central to safe in‑place behavior.</td></tr>
+          <tr><td><code>fs2</code></td><td>File locking to prevent races with other processes.</td><td>Recommended; remove only if you accept race risks and delete lock calls.</td></tr>
+          <tr><td><code>zeroize</code></td><td>Zeroes sensitive buffers after use.</td><td>Optional; remove buffer zeroization lines if you drop it.</td></tr>
+          <tr><td><code>same‑file</code></td><td>Robust cross‑platform “are these the same file?” checks (hard‑link safety).</td><td>Not recommended; removing weakens safety checks.</td></tr>
+          <tr><td><code>winapi</code> (Windows)</td><td>Tightens temp file ACLs; provides constants used by the Windows atomic replace.</td><td>Optional; delete the ACL helper and Windows replace details if you don’t need this hardening.</td></tr>
+        </tbody>
+      </table>
+
+      <details>
+        <summary>Minimal <code>Cargo.toml</code> if you accept fewer safeguards</summary>
+        <pre><code>[dependencies]
+clap = { version = "4.5", features = ["derive"] }
+anyhow = "1.0"
+tempfile = "3"
+# Optional removals:
+# - Remove fs2 and the lock_* calls to drop file locking
+# - Remove zeroize and the buf.zeroize() calls
+# - Remove same-file and the hard-link safety checks
+# - On Windows, remove winapi and the ACL tightening module/calls</code></pre>
+      </details>
+    </section>
+
+    <section id="errors">
+      <h2>Common errors &amp; fixes</h2>
+      <table>
+        <thead><tr><th>Message</th><th>Meaning</th><th>Fix</th></tr></thead>
+        <tbody>
+          <tr>
+            <td><code>required key file '.../key.key' not found</code></td>
+            <td><code>key.key</code> isn’t in the executable’s directory.</td>
+            <td>Place <code>key.key</code> next to the binary and input file.</td>
+          </tr>
+          <tr>
+            <td><code>key file is empty</code></td>
+            <td>The key file has 0 bytes.</td>
+            <td>Generate a non‑empty random key (ideally via CSPRNG).</td>
+          </tr>
+          <tr>
+            <td><code>input file '...' does not exist</code></td>
+            <td>Path typo or wrong folder.</td>
+            <td>Move the input next to the executable, or fix the filename.</td>
+          </tr>
+          <tr>
+            <td><code>Input file must be in the same directory as the executable</code></td>
+            <td>Same‑dir requirement violated.</td>
+            <td>Move the file next to the binary.</td>
+          </tr>
+          <tr>
+            <td><code>refusing to transform 'key.key'</code></td>
+            <td>Safety guard to avoid clobbering the key.</td>
+            <td>Choose a different input file.</td>
+          </tr>
+          <tr>
+            <td><code>refusing to transform the executable itself</code></td>
+            <td>Safety guard to avoid clobbering the program you’re running.</td>
+            <td>Choose a different input file.</td>
+          </tr>
+          <tr>
+            <td><code>key file became unreadable during processing</code></td>
+            <td>Another process truncated/locked the key mid‑run.</td>
+            <td>Close other apps, ensure key isn’t modified, and retry.</td>
+          </tr>
+          <tr>
+            <td><code>Access is denied</code> (Windows, during replace)</td>
+            <td>Another process holds the file, or AV is scanning it.</td>
+            <td>Close other apps using the file or exclude the folder and retry.</td>
+          </tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section id="troubleshooting">
+      <h2>Troubleshooting</h2>
+      <ul>
+        <li><strong>Windows: replace failed / access denied</strong> – Make sure no other program is holding the input file open. OTP drops handles and clears read‑only before replacing, but other locks can still block.</li>
+        <li><strong>Antivirus interference</strong> – Some AVs hold temp files briefly. Waiting a moment or excluding the folder can help.</li>
+        <li><strong>Network drives / NFS / SMB</strong> – Locking and rename semantics vary and may not be fully atomic. Prefer local disks for reliability.</li>
+        <li><strong>Huge files</strong> – OTP streams in 64&nbsp;KiB chunks; RAM use is small and constant.</li>
+      </ul>
+    </section>
+
+    <section id="how-it-works">
+      <h2>How it works (implementation)</h2>
+      <ol>
+        <li>Resolve paths and enforce that executable, input, and <code>key.key</code> are siblings.</li>
+        <li>Open input (exclusive lock) and key (shared lock); verify key isn’t empty.</li>
+        <li>Create a temp file in the same directory; on Windows, tighten its ACL.</li>
+        <li>Loop:
+          <ul>
+            <li>Read next chunk of data (up to 64&nbsp;KiB).</li>
+            <li>Fill a key buffer of equal size using <code>fill_key_slice</code>:
+              reads from current key position; if a read returns 0 (EOF), seek to start and continue.</li>
+            <li>XOR the two buffers and write to the temp file.</li>
+            <li>Zeroize both buffers.</li>
+          </ul>
+        </li>
+        <li>Flush and <code>sync_all</code> the temp file; drop all handles; on Windows, clear read‑only if set.</li>
+        <li>Atomically replace the input with the temp file
+          (<em>Windows:</em> <code>ReplaceFileW</code> write‑through;
+           <em>Unix:</em> same‑dir <code>rename()</code>), then fsync the directory on Unix.</li>
+      </ol>
+      <p>This design ensures byte‑for‑byte correctness even with chunked I/O. If the key is at least as long as the file, the key never wraps and mapping is strictly 1:1.</p>
+    </section>
+
+    <section id="faq">
+      <h2>FAQ</h2>
+      <h3>Is this a “real” one‑time pad?</h3>
+      <p>Only if your key is random, at least as long as the file, used once, and kept secret. If the key is shorter and wraps, it’s just a repeating‑key XOR stream—useful, but not information‑theoretically secure.</p>
+
+      <h3>Can I pass the key path or use environment variables?</h3>
+      <p>No—by design. Requiring <code>key.key</code> next to the executable and input keeps usage predictable on both Windows and Unix‑like systems.</p>
+
+      <h3>What happens if I run it twice?</h3>
+      <p>XOR is symmetric: applying the same key again restores the original file.</p>
+
+      <h3>Does it change timestamps or permissions?</h3>
+      <p><em>Windows:</em> the file is replaced via <code>ReplaceFileW</code>, which preserves the destination file’s security and attributes; if the file was read‑only, OTP temporarily clears it to permit replacement and then restores it.</p>
+      <p><em>Unix:</em> the temp file’s mode is set to match the original before the atomic <code>rename()</code>, so permissions are preserved; OTP also fsyncs the directory to persist the rename.</p>
+    </section>
+
+    <section id="license">
+      <h2>License</h2>
+      <p>Dual‑licensed under <strong>MIT</strong> or <strong>Apache‑2.0</strong> at your option.</p>
+    </section>
+
+    <section id="changelog">
+      <h2>Changelog</h2>
+      <ul>
+        <li><strong>0.7.0</strong> — Windows <code>ReplaceFileW</code> atomic replace (preserves metadata), Unix directory fsync after rename, temp‑file cleanup guard, hard‑link safety checks, updated PowerShell CSPRNG snippet, clarified docs.</li>
+        <li><strong>0.6.0</strong> — Positional input (<code>otp &lt;INPUT&gt;</code>), always in‑place, requires <code>key.key</code>, same‑dir rule, key wrapping, locking, temp+rename, buffer zeroization, Windows ACL hardening.</li>
+      </ul>
+    </section>
+
+    <footer>
+      <p>OTP – simple by default, safe by design.</p>
+    </footer>
+  </div>
+</body>
+</html>

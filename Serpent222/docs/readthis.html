@@ -1,0 +1,191 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>serpent2 — Password-protected Serpent file encryption</title>
+<style>
+  :root{
+    --bg:#ffffff;--fg:#0b1020;--muted:#505a69;--card:#f6f8fb;--accent:#2563eb;
+    --ok:#16a34a;--warn:#b45309;--bad:#dc2626;--code:#0f172a;--kbd:#11182710;
+    --border:#e5e7eb;
+  }
+  @media (prefers-color-scheme: dark){
+    :root{--bg:#0b1020;--fg:#e6ecff;--muted:#b8c0d9;--card:#121a2b;--accent:#60a5fa;
+          --ok:#22c55e;--warn:#f59e0b;--bad:#f87171;--code:#e2e8f0;--kbd:#e5e7eb10;--border:#1f2a44;}
+  }
+  html,body{background:var(--bg);color:var(--fg);font:16px/1.55 ui-sans-serif,system-ui,-apple-system,Segoe UI,Roboto,Inter,Arial,sans-serif;margin:0}
+  main{max-width:980px;margin:40px auto;padding:0 20px}
+  h1{font-size:2rem;margin:0 0 8px}
+  h2{margin-top:2.2rem;border-top:1px solid var(--border);padding-top:1.2rem}
+  p,li{color:var(--fg)}
+  .muted{color:var(--muted)}
+  .card{background:var(--card);border:1px solid var(--border);border-radius:14px;padding:16px}
+  pre{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:14px;overflow:auto}
+  code,kbd{font-family:ui-monospace,Menlo,Consolas,monospace}
+  code{color:var(--code)}
+  kbd{background:var(--kbd);border:1px solid var(--border);border-bottom-width:2px;border-radius:6px;padding:1px 6px}
+  table{border-collapse:collapse;width:100%;overflow:auto}
+  th,td{border-bottom:1px solid var(--border);padding:.6rem .5rem;text-align:left;vertical-align:top}
+  .pill{display:inline-block;background:var(--card);border:1px solid var(--border);border-radius:999px;padding:.2rem .6rem;margin-right:.4rem}
+  .callout{border-left:4px solid var(--accent);padding:10px 14px;background:var(--card);border-radius:8px}
+  .ok{color:var(--ok)} .warn{color:var(--warn)} .bad{color:var(--bad)}
+  .grid{display:grid;gap:14px;grid-template-columns:repeat(auto-fit,minmax(260px,1fr))}
+  .small{font-size:.92rem}
+  .btn{display:inline-flex;gap:.5rem;align-items:center;border:1px solid var(--border);background:var(--card);border-radius:10px;padding:8px 10px;cursor:pointer}
+  .btn:hover{border-color:var(--accent)}
+</style>
+<script>
+  // Tiny copy buttons for code blocks
+  addEventListener('DOMContentLoaded', () => {
+    document.querySelectorAll('pre').forEach(pre => {
+      const btn = document.createElement('button');
+      btn.className = 'btn small';
+      btn.textContent = 'Copy';
+      btn.style.position='absolute';
+      btn.style.right='10px'; btn.style.marginTop='6px';
+      const wrap = document.createElement('div');
+      wrap.style.position='relative';
+      pre.parentNode.insertBefore(wrap, pre);
+      wrap.appendChild(pre);
+      wrap.appendChild(btn);
+      btn.onclick = async () => {
+        const text = pre.innerText.replace(/\n+$/, '\n');
+        try { await navigator.clipboard.writeText(text); btn.textContent = 'Copied!'; setTimeout(()=>btn.textContent='Copy',1200); }
+        catch { btn.textContent='Error'; setTimeout(()=>btn.textContent='Copy',1200); }
+      };
+    });
+  });
+</script>
+</head>
+<body>
+<main>
+  <header>
+    <h1>serpent2</h1>
+    <p class="muted">A small Rust CLI that encrypts/decrypts files using the <strong>Serpent</strong> block cipher in CBC mode with PKCS#7 padding and encrypt-then-MAC authentication (HMAC-SHA256). Passwords are stretched with Argon2id.</p>
+    <div class="grid">
+      <div class="card small">
+        <strong>Algorithms</strong><br>
+        <span class="pill">Serpent-128/256</span>
+        <span class="pill">CBC + PKCS#7</span>
+        <span class="pill">HMAC-SHA256 (EtM)</span>
+        <span class="pill">Argon2id</span>
+      </div>
+      <div class="card small">
+        <strong>Rust crates</strong><br>
+        <span class="pill">serpent</span>
+        <span class="pill">cbc</span>
+        <span class="pill">cipher</span>
+        <span class="pill">hmac</span>
+        <span class="pill">sha2</span>
+        <span class="pill">argon2</span>
+        <span class="pill">hkdf</span>
+        <span class="pill">secrecy</span>
+      </div>
+    </div>
+  </header>
+
+  <h2>Install &amp; build</h2>
+  <pre><code># Clone and build
+git clone &quot;https://example.com/serpent2.git&quot;
+cd serpent2
+cargo build --release
+
+# Binary will be at:
+target/release/serpent2
+</code></pre>
+
+  <h2>Quick start</h2>
+  <pre><code># Encrypt (prompts for password + confirmation)
+serpent2 encrypt -i secret.pdf -o secret.pdf.enc
+
+# Decrypt (prompts for password)
+serpent2 decrypt -i secret.pdf.enc -o secret.pdf
+
+# Overwrite outputs if they already exist
+serpent2 encrypt -i input.bin -o out.enc --force
+serpent2 decrypt -i out.enc -o recovered.bin --force
+</code></pre>
+
+  <div class="callout small">
+    <strong>File format:</strong> <code>SRP2</code> header + ciphertext + tag.
+    Authentication is computed over the <em>entire header and ciphertext</em>, so KDF parameters, salt, and IV are protected.
+  </div>
+
+  <h2>How it works</h2>
+  <ol>
+    <li><strong>Key derivation</strong> — Argon2id with tunable parameters (default: m=64&nbsp;MiB, t=3, p=1) derives a 32-byte master key from the password and a random 16-byte salt.</li>
+    <li><strong>Subkeys</strong> — HKDF-SHA256 splits the master key into <code>k_enc</code> (encryption) and <code>k_auth</code> (authentication).</li>
+    <li><strong>Encryption</strong> — Serpent in CBC mode with a random 16-byte IV; PKCS#7 padding is applied and validated by the cipher crate.</li>
+    <li><strong>Authentication</strong> — HMAC-SHA256 computed over <code>header || ciphertext</code> (encrypt-then-MAC). Decryption verifies the MAC before attempting to decrypt.</li>
+  </ol>
+
+  <h2>On-disk format</h2>
+  <p class="small">All integers are little-endian. The MAC covers bytes from <code>magic</code> through the end of the ciphertext.</p>
+  <table class="small">
+    <thead><tr><th>Field</th><th>Size</th><th>Value</th><th>Notes</th></tr></thead>
+    <tbody>
+      <tr><td><code>magic</code></td><td>4</td><td><code>&quot;SRP2&quot;</code></td><td>Container identifier</td></tr>
+      <tr><td><code>version</code></td><td>2</td><td><code>0x0001</code></td><td>Format version</td></tr>
+      <tr><td><code>kdf_id</code></td><td>1</td><td><code>1</code></td><td>1 = Argon2id</td></tr>
+      <tr><td><code>argon2_m_kib</code></td><td>4</td><td>e.g. <code>65536</code></td><td>Memory (KiB)</td></tr>
+      <tr><td><code>argon2_t</code></td><td>4</td><td>e.g. <code>3</code></td><td>Iterations</td></tr>
+      <tr><td><code>argon2_p</code></td><td>4</td><td>e.g. <code>1</code></td><td>Lanes/parallelism</td></tr>
+      <tr><td><code>salt</code></td><td>16</td><td>random</td><td>Used by Argon2id</td></tr>
+      <tr><td><code>iv</code></td><td>16</td><td>random</td><td>CBC IV</td></tr>
+      <tr><td><code>ciphertext</code></td><td>n</td><td>…</td><td>PKCS#7 padded</td></tr>
+      <tr><td><code>tag</code></td><td>32</td><td>HMAC-SHA256</td><td>EtM over <code>header||ciphertext</code></td></tr>
+    </tbody>
+  </table>
+
+  <h2>CLI</h2>
+  <table class="small">
+    <thead><tr><th>Command</th><th>Flags</th><th>Description</th></tr></thead>
+    <tbody>
+      <tr>
+        <td><code>encrypt</code></td>
+        <td><code>-i, --input &lt;PATH&gt;</code><br><code>-o, --output &lt;PATH&gt;</code> (optional)<br><code>--force</code></td>
+        <td>Encrypts a file. Prompts for password and confirmation. Writes <code>.enc</code> if no output is provided.</td>
+      </tr>
+      <tr>
+        <td><code>decrypt</code></td>
+        <td><code>-i, --input &lt;PATH&gt;</code><br><code>-o, --output &lt;PATH&gt;</code> (optional)<br><code>--force</code></td>
+        <td>Decrypts a file. Prompts for password. Writes <code>.dec</code> if no output is provided.</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <h2>Security notes</h2>
+  <ul class="small">
+    <li><span class="ok">✓</span> Encrypt-then-MAC prevents padding-oracle issues; MAC is checked before decryption.</li>
+    <li><span class="ok">✓</span> <code>secrecy::Secret&lt;[u8;32]&gt;</code> ensures key material is zeroized on drop.</li>
+    <li><span class="warn">•</span> CBC+HMAC is robust when done right, but if you don’t need Serpent specifically, consider a standard AEAD like AES-GCM or ChaCha20-Poly1305.</li>
+    <li><span class="warn">•</span> Default Argon2id memory is 64&nbsp;MiB; increase it if your environment allows for better offline resistance.</li>
+  </ul>
+
+  <h2>Troubleshooting</h2>
+  <ul class="small">
+    <li><strong>HMAC mismatch:</strong> Wrong password or file corrupted/modified.</li>
+    <li><strong>Invalid padding:</strong> Indicates tampering or data corruption; MAC should typically catch this first.</li>
+    <li><strong>Refusing to overwrite:</strong> Use <code>--force</code> or choose a different <code>-o</code> path.</li>
+  </ul>
+
+  <h2>Development</h2>
+  <pre><code># Run with logs
+RUST_LOG=info cargo run -- encrypt -i sample.txt -o sample.txt.enc
+RUST_LOG=info cargo run -- decrypt -i sample.txt.enc -o sample.txt.dec
+
+# Format & lint
+cargo fmt
+cargo clippy -- -D warnings
+</code></pre>
+
+  <h2>License</h2>
+  <p class="small">MIT or Apache-2.0 — choose what fits your project. Remember: cryptography is subtle; use at your own risk.</p>
+
+  <footer class="muted small" style="margin-top:3rem">
+    © <script>document.write(new Date().getFullYear())</script> serpent2. All rights reserved.
+  </footer>
+</main>
+</body>
+</html>

@@ -1,0 +1,105 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>tfish-cli — Threefish-1024 SIV CLI</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <style>
+    :root{
+      --bg:#0b0f14; --fg:#e6edf3; --muted:#9db1c7; --accent:#7cc7ff;
+      --code-bg:#0f1720; --border:#1f2a36; --green:#7ee787; --blue:#7cc7ff;
+    }
+    *{box-sizing:border-box}
+    body{margin:0; font-family: system-ui, -apple-system, Segoe UI, Roboto, Inter, Arial, sans-serif; background:var(--bg); color:var(--fg); line-height:1.6}
+    .wrap{max-width:860px; margin:40px auto; padding:0 20px}
+    h1{font-size:2.2rem; margin:0 0 0.5rem 0}
+    h2{font-size:1.4rem; margin-top:2rem}
+    p{color:var(--muted)}
+    code, pre{font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace}
+    pre{background:var(--code-bg); padding:14px 16px; border:1px solid var(--border); border-radius:10px; overflow:auto}
+    code{background:var(--code-bg); padding:2px 6px; border-radius:6px}
+    .lead{font-size:1.05rem}
+    ul{padding-left:1.2rem}
+    li{margin: 0.15rem 0}
+    .pill{display:inline-block; padding:.2rem .55rem; border-radius:999px; border:1px solid var(--border); color:var(--muted); margin-right:.4rem}
+    .badges{margin: .6rem 0 1rem 0}
+    a{color:var(--accent); text-decoration:none}
+    a:hover{text-decoration:underline}
+    .note{border-left:3px solid var(--blue); padding:.6rem .8rem; background:#0d1420; border-radius:6px; color:#c7d9ee}
+    .ok{color:var(--green)}
+    footer{margin:3rem 0 1rem 0; color:#88a1b6; font-size:.9rem}
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <h1>tfish-cli</h1>
+    <div class="badges">
+      <span class="pill">Threefish‑1024</span>
+      <span class="pill">SIV mode</span>
+      <span class="pill">Argon2id</span>
+      <span class="pill">Encrypt‑then‑MAC</span>
+      <span class="pill">In‑place</span>
+    </div>
+    <p class="lead">
+      <strong>tfish-cli</strong> is a production-grade file encryption tool using the <em>Threefish‑1024</em> cipher in <em>SIV (Synthetic IV)</em> mode. 
+      It auto-detects whether a file is encrypted and encrypts or decrypts <strong>in place</strong> with a single command.
+    </p>
+
+    <h2>Features</h2>
+    <ul>
+      <li><strong>Threefish‑1024</strong> block cipher — 1024-bit key, large security margin.</li>
+      <li><strong>SIV mode</strong> — nonce‑misuse resistant; safe even if you repeat work with the same password.</li>
+      <li><strong>Single-command</strong> — auto-detects magic header to decide encrypt vs decrypt.</li>
+      <li><strong>In-place operation</strong> — safe temp file + atomic replace in the same directory.</li>
+      <li><strong>Argon2id KDF</strong> — compile-time configurable memory, iterations, and lanes.</li>
+      <li><strong>Authenticated</strong> — Skein‑based HMAC integrity; tampering or bad password is detected.</li>
+      <li>Cross‑platform: Windows, macOS, Linux.</li>
+    </ul>
+
+    <h2>Build</h2>
+    <p>Requires a recent Rust toolchain.</p>
+    <pre><code>git clone &lt;your repo&gt;
+cd tfish-cli
+cargo build --release</code></pre>
+    <p>Binary output: <code>target/release/tfish</code> (or <code>tfish.exe</code> on Windows).</p>
+
+    <h2>Usage</h2>
+    <pre><code>tfish path/to/file</code></pre>
+    <ul>
+      <li>If the file is <em>plaintext</em> → it prompts and encrypts in place.</li>
+      <li>If the file is <em>already encrypted</em> (magic header present) → it prompts and decrypts in place.</li>
+    </ul>
+    <pre><code>echo "Secret stuff" &gt; note.txt
+tfish note.txt
+Password: ********
+tfish note.txt
+Password: ********</code></pre>
+
+    <h2>Security details</h2>
+    <ul>
+      <li><strong>Cipher:</strong> Threefish‑1024</li>
+      <li><strong>Mode:</strong> SIV (Synthetic IV)</li>
+      <li><strong>KDF:</strong> Argon2id</li>
+      <li><strong>MAC:</strong> Skein‑512 HMAC (32‑byte tag)</li>
+      <li><strong>Chunking:</strong> fixed-size blocks for streaming large files</li>
+    </ul>
+
+    <h2>Compile‑time settings</h2>
+    <p>Edit these constants at the top of <code>src/main.rs</code> and rebuild:</p>
+    <pre><code>const KDF_MEM_MIB: u32 = 512;
+const KDF_ITERS: u32 = 3;
+const KDF_LANES: u32 = 1;
+const CHUNK_KIB: usize = 1024;</code></pre>
+    <p class="note">Higher KDF memory and iterations increase password cracking cost but slow down legitimate use.</p>
+
+    <h2>Notes</h2>
+    <ul>
+      <li>Wrong password or tampering → <code>MAC verification failed</code>; plaintext isn’t written.</li>
+      <li>In-place encryption overwrites the original; keep your own backups if needed.</li>
+      <li>Each encryption uses a fresh salt and SIV tag; ciphertext differs even with the same input/password.</li>
+    </ul>
+
+    <footer>MIT License • © 2025</footer>
+  </div>
+</body>
+</html>

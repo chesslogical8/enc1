@@ -1,0 +1,193 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>serpent-tool — README</title>
+  <style>
+    :root {
+      --bg: #0b0c10;
+      --panel: #121419;
+      --text: #e6e6e6;
+      --muted: #aab0bb;
+      --accent: #5bd0ff;
+      --good: #7ddc6d;
+      --warn: #ffd166;
+      --bad: #ff6b6b;
+      --code-bg: #0f131a;
+      --border: #1e232c;
+    }
+    * { box-sizing: border-box; }
+    body { margin: 0; background: var(--bg); color: var(--text); font: 16px/1.6 system-ui, -apple-system, Segoe UI, Roboto, Ubuntu, Cantarell, Noto Sans, Helvetica, Arial, "Apple Color Emoji", "Segoe UI Emoji"; }
+    header {
+      background: linear-gradient(135deg, #0b2239, #0a1724 60%);
+      border-bottom: 1px solid var(--border);
+      padding: 40px 20px 28px;
+    }
+    .container { max-width: 980px; margin: 0 auto; padding: 0 20px; }
+    h1 { margin: 0 0 8px; font-size: 32px; letter-spacing: .4px; }
+    h2 { margin: 28px 0 12px; font-size: 22px; }
+    h3 { margin: 22px 0 8px; font-size: 18px; }
+    p { color: var(--muted); }
+    .tagline { color: var(--muted); }
+    .panel { background: var(--panel); border: 1px solid var(--border); border-radius: 14px; padding: 18px; }
+    code, pre { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace; font-size: 0.95em; }
+    pre { background: var(--code-bg); border: 1px solid var(--border); border-radius: 12px; padding: 14px; overflow: auto; }
+    .kbd { padding: 1px 6px; border: 1px solid var(--border); border-bottom-width: 2px; border-radius: 6px; background: #0e1520; font-family: inherit; }
+    ul { margin: 8px 0 12px 24px; color: var(--muted); }
+    .grid { display: grid; gap: 16px; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); }
+    .pill { display: inline-block; padding: 3px 10px; border-radius: 99px; border: 1px solid var(--border); background: #0e1520; color: var(--accent); margin-right: 8px; font-size: 12px; }
+    .callout { border-left: 3px solid var(--accent); padding: 12px 14px; background: #0e1520; border-radius: 8px; color: var(--muted); }
+    a { color: var(--accent); text-decoration: none; }
+    a:hover { text-decoration: underline; }
+    .small { font-size: 0.95em; }
+  </style>
+</head>
+<body>
+  <header>
+    <div class="container">
+      <h1>serpent-tool</h1>
+      <p class="tagline">File encryption with Serpent-256 in CBC mode + HMAC-SHA256 (Encrypt‑then‑MAC), with HKDF key separation.</p>
+      <div>
+        <span class="pill">Rust</span>
+        <span class="pill">Serpent-256</span>
+        <span class="pill">CBC + PKCS#7</span>
+        <span class="pill">HMAC-SHA256</span>
+        <span class="pill">HKDF-SHA256</span>
+      </div>
+    </div>
+  </header>
+
+  <main class="container">
+    <section class="panel">
+      <h2>Overview</h2>
+      <p><strong>serpent-tool</strong> is a small command‑line utility that encrypts and decrypts files using the Serpent block cipher (256‑bit key) in CBC mode with PKCS#7 padding. Integrity and authenticity are provided via HMAC‑SHA256 in an encrypt‑then‑MAC (EtM) construction. Keys for encryption and MAC are derived from a 32‑byte master key using HKDF‑SHA256 with a per‑message random salt.</p>
+      <div class="grid">
+        <div>
+          <h3>Features</h3>
+          <ul>
+            <li>Serpent‑256 / CBC / PKCS#7</li>
+            <li>Encrypt‑then‑MAC with HMAC‑SHA256</li>
+            <li>HKDF key separation (ENC &amp; MAC keys)</li>
+            <li>Random salt &amp; IV via <code>OsRng</code></li>
+            <li>Zeroizes key material on drop</li>
+            <li>Simple, versioned file format</li>
+          </ul>
+        </div>
+        <div>
+          <h3>CLI</h3>
+          <ul>
+            <li><span class="kbd">E</span> — encrypt file in place</li>
+            <li><span class="kbd">D</span> — decrypt file in place</li>
+          </ul>
+          <div class="callout small">The tool writes to a temporary <code>.tmp</code> file and then replaces the original on success.</div>
+        </div>
+      </div>
+    </section>
+
+    <section class="panel">
+      <h2>File format</h2>
+      <p>Each output file has the following binary layout. Header fields are authenticated by the HMAC.</p>
+<pre><code>[ MAGIC(4) | VERSION(1) | SALT(32) | IV(16) | CIPHERTEXT(N) | TAG(32) ]
+MAGIC   = ASCII "SRP1"
+VERSION = 0x01
+SALT    = 32 random bytes (HKDF salt)
+IV      = 16 random bytes (Serpent block size)
+TAG     = HMAC-SHA256 over MAGIC||VERSION||SALT||IV||CIPHERTEXT</code></pre>
+    </section>
+
+    <section class="panel">
+      <h2>Quick start</h2>
+      <h3>1) Generate a 32‑byte key</h3>
+<pre><code># Linux/macOS (writes 32 random bytes)
+head -c 32 /dev/urandom &gt; key.key
+
+# Windows PowerShell
+[Byte[]]$b = New-Object Byte[] 32; (New-Object System.Security.Cryptography.RNGCryptoServiceProvider).GetBytes($b); [IO.File]::WriteAllBytes("key.key", $b)
+</code></pre>
+
+      <h3>2) Build</h3>
+<pre><code>cargo build --release</code></pre>
+
+      <h3>3) Usage</h3>
+<pre><code># Encrypt in place
+serpent-tool E path/to/file
+
+# Decrypt in place
+serpent-tool D path/to/file</code></pre>
+
+      <h3>Expected output</h3>
+<pre><code>Encryption successful: "path/to/file"</code></pre>
+    </section>
+
+    <section class="panel">
+      <h2>Dependencies</h2>
+      <p>This project aliases the <code>serpent</code> crate as <code>serpent_crate</code> to avoid a name clash with the package.</p>
+<pre><code class="toml"># Cargo.toml
+[package]
+name = "serpent-tool"
+version = "0.2.1"
+edition = "2021"
+
+[dependencies]
+serpent_crate = { package = "serpent", version = "0.5.1" }
+cbc = "0.1"
+block-padding = "0.3"
+rand = "0.8"
+rand_core = "0.6"
+hmac = "0.12"
+sha2 = "0.10"
+hkdf = "0.12"
+anyhow = "1.0"
+zeroize = "1.7"
+</code></pre>
+
+      <h3>Key design choices</h3>
+      <ul>
+        <li><strong>EtM</strong> (encrypt‑then‑MAC): prevents malleability; padding is only processed after MAC verification.</li>
+        <li><strong>HKDF</strong>: derives independent ENC and MAC keys from a single master key, avoiding key/role mixing.</li>
+        <li><strong>Versioned header</strong>: allows safe format evolution in the future.</li>
+      </ul>
+    </section>
+
+    <section class="panel">
+      <h2>Security notes</h2>
+      <ul>
+        <li>Keep <code>key.key</code> secret and exactly 32 bytes. Consider file permissions (e.g., <code>chmod 600 key.key</code>).</li>
+        <li>The master key is never stored in the output; a random salt and IV are generated for each encryption.</li>
+        <li>On decryption, HMAC is verified <em>before</em> any padding is processed.</li>
+        <li>Key material is zeroized on drop; however, plaintext may be present in memory during processing.</li>
+        <li>Back up your key: losing it means your data is unrecoverable.</li>
+      </ul>
+    </section>
+
+    <section class="panel">
+      <h2>Troubleshooting</h2>
+      <ul>
+        <li><strong>"key.key must be exactly 32 bytes"</strong>: regenerate your key as shown above.</li>
+        <li><strong>"HMAC verification failed"</strong>: the file is corrupted, the wrong key was used, or the header was tampered with.</li>
+        <li><strong>"Unsupported version"</strong>: the file was created by a newer/older incompatible version of the format.</li>
+        <li><strong>Windows AV false positives</strong>: some AV tools flag small crypto binaries; consider code‑signing your release builds.</li>
+      </ul>
+    </section>
+
+    <section class="panel">
+      <h2>Roadmap (optional)</h2>
+      <ul>
+        <li>Streaming mode (chunked I/O, constant memory) for very large files</li>
+        <li>Optional Associated Data (AAD) authenticated but not encrypted</li>
+        <li>Key file format with KDF (password‑based mode)</li>
+      </ul>
+    </section>
+
+    <section class="panel">
+      <h2>License</h2>
+      <p>MIT or Apache‑2.0, at your preference. Add a LICENSE file to the repo.</p>
+    </section>
+
+    <footer style="color:var(--muted); margin: 28px 0 40px;">
+      <small>© 2025 serpent-tool • Built with RustCrypto primitives.</small>
+    </footer>
+  </main>
+</body>
+</html>
