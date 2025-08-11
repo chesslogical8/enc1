@@ -1,0 +1,290 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>SFE – Secure, Crash‑Safe, Streaming File Encryption (Rust CLI)</title>
+<style>
+  :root { --maxw: 980px; --mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace; }
+  html, body { margin:0; padding:0; }
+  body { font: 16px/1.55 system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, "Apple Color Emoji", "Segoe UI Emoji"; color:#111; background:#fff; }
+  header { background: #0b3d91; color: #fff; padding: 2.2rem 1.25rem; }
+  header h1 { margin: 0 0 .4rem 0; font-size: 1.9rem; letter-spacing: .2px; }
+  header p { margin: 0; opacity: .95; }
+  main { max-width: var(--maxw); margin: 0 auto; padding: 1.5rem 1.25rem 3rem; }
+  h2 { margin-top: 2rem; border-bottom: 1px solid #eee; padding-bottom: .4rem; }
+  h3 { margin-top: 1.25rem; }
+  code, pre { font-family: var(--mono); font-size: .95rem; }
+  pre { background:#f6f8fa; border:1px solid #eaecef; padding: .9rem 1rem; overflow:auto; border-radius: 6px; }
+  .kbd { font-family: var(--mono); background:#f6f8fa; border:1px solid #d0d7de; border-radius:4px; padding:.05rem .35rem; }
+  .pill { display:inline-block; padding:.2rem .5rem; border:1px solid #eaecef; background:#f6f8fa; border-radius:999px; font-size:.85rem; margin-right:.35rem; }
+  ul { margin-top:.2rem; }
+  .warning { background:#fff4e5; border:1px solid #ffca7a; padding:.8rem 1rem; border-radius:6px; }
+  .ok { background:#ecfdf5; border:1px solid #a7f3d0; padding:.8rem 1rem; border-radius:6px; }
+  footer { color:#666; font-size:.9rem; margin-top:3rem; border-top:1px solid #eee; padding-top:1rem; }
+  .grid { display:grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 1rem; }
+  a { color:#0b3d91; text-decoration: none; }
+  a:hover { text-decoration: underline; }
+</style>
+</head>
+<body>
+<header>
+  <h1>SFE – Secure, Crash‑Safe, Streaming File Encryption</h1>
+  <p>Rust CLI that encrypts <em>in place</em> with Argon2id + XChaCha20‑Poly1305, atomic replace, and careful I/O.</p>
+</header>
+<main>
+
+<section id="overview">
+  <h2>Overview</h2>
+  <p><strong>SFE</strong> is a tiny Rust command‑line tool for encrypting and decrypting files <em>in place</em> with production‑oriented safety:
+    strong modern cryptography, streaming AEAD, password hardening, and crash‑safe atomic replacement. Its interface is intentionally minimal:</p>
+  <pre><code># Encrypt in place
+sfe E &lt;path&gt;
+
+# Decrypt in place
+sfe D &lt;path&gt;</code></pre>
+  <div class="grid">
+    <div class="ok">
+      <strong>Highlights</strong>
+      <ul>
+        <li>Key derivation: <strong>Argon2id</strong> (default 256&nbsp;MiB, 3 passes, parallel).</li>
+        <li>AEAD: <strong>XChaCha20‑Poly1305</strong> in streaming mode (1&nbsp;MiB chunks).</li>
+        <li>Per‑chunk nonces: 16‑byte random seed + 64‑bit counter.</li>
+        <li>Header integrity: <strong>BLAKE3</strong> keyed MAC (32 bytes) over header.</li>
+        <li>Crash safety: write to temp, <strong>fsync</strong>, then <strong>atomic replace</strong> (POSIX <code>rename</code>, Windows <code>ReplaceFileW</code>).</li>
+        <li>Safety rails: refuses symlinks, preserves basic permissions, zeroizes secrets.</li>
+        <li>Cross‑platform: Linux &amp; Windows.</li>
+      </ul>
+    </div>
+    <div class="warning">
+      <strong>Note</strong>
+      <ul>
+        <li>This project focuses on reliability and strong default cryptography, but it has not undergone third‑party security audit.</li>
+        <li>For password‑based encryption, the passphrase is <em>your root of trust</em>. Choose a high‑entropy passphrase.</li>
+      </ul>
+    </div>
+  </div>
+</section>
+
+<section id="install">
+  <h2>Installation</h2>
+  <h3>Requirements</h3>
+  <ul>
+    <li>Rust toolchain (stable). Install via <a href="https://rustup.rs/">rustup</a>.</li>
+    <li>Windows or Linux.</li>
+  </ul>
+
+  <h3>Project layout</h3>
+  <pre><code>sfe/
+├─ Cargo.toml
+└─ src/
+   └─ main.rs
+</code></pre>
+
+  <h3>Cargo.toml</h3>
+  <pre><code>[package]
+name = "sfe"
+version = "0.1.0"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+description = "Secure, crash-safe, streaming file encryption in place (XChaCha20-Poly1305 + Argon2id)."
+
+[dependencies]
+anyhow = "1"
+argon2 = "0.5"
+blake3 = "1.5"
+chacha20poly1305 = "0.10.1"
+rand = "0.8"
+rpassword = "7"
+zeroize = "1.6"
+tempfile = "3.10"
+num_cpus = "1.16"
+cfg-if = "1.0"
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.52", features = ["Win32_Storage_FileSystem"] }</code></pre>
+
+  <h3>Build</h3>
+  <pre><code>cargo build --release</code></pre>
+
+  <p>The binary will be at <code>./target/release/sfe</code> (or <code>sfe.exe</code> on Windows).</p>
+</section>
+
+<section id="usage">
+  <h2>Usage</h2>
+  <h3>Encrypt a file in place</h3>
+  <pre><code>./sfe E a.txt
+# Prompts for passphrase (twice). Replaces a.txt with encrypted form.</code></pre>
+
+  <h3>Decrypt a file in place</h3>
+  <pre><code>./sfe D a.txt
+# Prompts once. Replaces a.txt with plaintext.</code></pre>
+
+  <h3>Exit codes</h3>
+  <ul>
+    <li><span class="pill">0</span> success</li>
+    <li><span class="pill">1</span> error</li>
+    <li><span class="pill">2</span> usage error</li>
+  </ul>
+
+  <h3>Tuning the KDF (optional)</h3>
+  <p>Argon2id parameters can be adjusted with environment variables. The defaults aim for high password‑guessing cost on commodity hardware.</p>
+  <pre><code># Example: 512 MiB memory, 4 passes, 8 lanes
+SFE_ARGON2_M_KIB=524288 SFE_ARGON2_T=4 SFE_ARGON2_P=8 ./sfe E big.bin</code></pre>
+</section>
+
+<section id="security">
+  <h2>Security design (why this is production‑minded)</h2>
+  <h3>Primitives</h3>
+  <ul>
+    <li><strong>Key derivation:</strong> Argon2id with random 16‑byte salt. Derives 64 bytes: first 32 for AEAD, second 32 for header MAC.</li>
+    <li><strong>AEAD:</strong> XChaCha20‑Poly1305 (24‑byte nonce, 16‑byte tag) used in streaming (1&nbsp;MiB plaintext chunk → 1&nbsp;MiB + 16 bytes ciphertext).</li>
+    <li><strong>Header MAC:</strong> BLAKE3 keyed hash (32 bytes) over the header (ex‑MAC). Prevents header tampering before any data is processed.</li>
+  </ul>
+
+  <h3>Nonce strategy</h3>
+  <p>Per file, a 16‑byte random <em>nonce seed</em> is generated. For chunk <code>i</code>, the XChaCha nonce is
+  <code>nonce = seed || LE64(i)</code>, guaranteeing uniqueness up to 2<sup>64</sup> chunks.</p>
+
+  <h3>Authenticated streaming &amp; AAD binding</h3>
+  <p>Each chunk is sealed with AEAD using AAD = <code>header_mac || LE64(i)</code>. This detects reordering, truncation, and
+  cross‑file splicing attempts.</p>
+
+  <h3>Crash‑safe “in place”</h3>
+  <ul>
+    <li>Write header and ciphertext to a temp file in the same directory.</li>
+    <li><code>fsync</code> the temp file.</li>
+    <li>Atomically replace the original (<code>rename</code> on POSIX, <code>ReplaceFileW</code> on Windows).</li>
+    <li>On POSIX, <code>fsync</code> the directory to durably record the rename.</li>
+  </ul>
+
+  <h3>Defensive I/O</h3>
+  <ul>
+    <li>Refuses symlinks; operates only on regular files.</li>
+    <li>Preserves basic permissions (best‑effort).</li>
+    <li>Zeroizes passphrases and derived keys in memory.</li>
+  </ul>
+</section>
+
+<section id="format">
+  <h2>File format</h2>
+  <p>All multi‑byte integers are little‑endian. Header size is 96 bytes.</p>
+  <h3>Header (96 bytes)</h3>
+  <pre><code>struct HeaderV1 {
+  // 4 + 1 + 1 + 1 + 1
+  magic:        "SFE1"
+  version:      0x01
+  alg_id:       0x01   // XChaCha20-Poly1305
+  kdf_id:       0x01   // Argon2id
+  reserved:     0x00
+
+  // 4 + 4 + 4
+  m_cost_kib:   u32    // Argon2 memory (KiB)
+  t_cost:       u32    // Argon2 iterations
+  p_cost:       u32    // Argon2 lanes
+
+  // 16 + 16
+  salt:         [16]   // KDF salt
+  nonce_seed:   [16]   // Nonce base for chunks
+
+  // 4 + 8
+  chunk_size:   u32    // usually 1 MiB
+  plaintext_len:u64    // original file size
+
+  // 32
+  header_mac:   [32]   // BLAKE3(key=hdr_key, header_without_mac)
+}</code></pre>
+
+  <h3>Body</h3>
+  <p>For each chunk <code>i</code> (0‑based):</p>
+  <ul>
+    <li><code>nonce = nonce_seed || LE64(i)</code> (24 bytes)</li>
+    <li><code>aad = header_mac || LE64(i)</code> (40 bytes)</li>
+    <li><code>cipher_chunk = AEAD(plaintext_chunk, nonce, aad)</code> (len = chunk_len + 16)</li>
+  </ul>
+</section>
+
+<section id="threat-model">
+  <h2>Threat model</h2>
+  <ul>
+    <li><strong>Protects against:</strong> offline attackers who obtain the ciphertext; accidental corruption; crash during encryption/decryption.</li>
+    <li><strong>Out of scope:</strong> active malware on the host at encryption time; passphrase key‑logging; hardware faults beyond detection; forensic remnants in swap/pagefile/old temp files outside SFE's control.</li>
+  </ul>
+</section>
+
+<section id="quick-test">
+  <h2>Quick self‑test</h2>
+  <pre><code># 1) Build
+cargo build --release
+
+# 2) Make a sample file
+echo "secret stuff" &gt; a.txt
+
+# 3) Encrypt
+./target/release/sfe E a.txt
+# (enter passphrase twice)
+
+# 4) Decrypt
+./target/release/sfe D a.txt
+# (enter passphrase once)
+
+# 5) Tamper test (should fail to decrypt)
+./target/release/sfe E a.txt
+printf "\x00" | dd of=a.txt bs=1 seek=120 status=none conv=notrunc
+./target/release/sfe D a.txt  # &lt;-- decryption should error out</code></pre>
+</section>
+
+<section id="troubleshooting">
+  <h2>Troubleshooting</h2>
+
+  <h3>“feature xchacha20 not found”</h3>
+  <p>Use <code>chacha20poly1305 = "0.10.1"</code> with no feature flags. The XChaCha type is available by default.</p>
+
+  <h3>Borrow checker error around <code>tmp.as_file()</code></h3>
+  <p>Drop the writer (mutable borrow) before calling methods that take an immutable borrow of the same temp file handle.</p>
+
+  <h3>Windows: replace fails because file is in use</h3>
+  <p>Ensure you <code>drop(reader)</code> and close any other handles on the original file before calling <code>ReplaceFileW</code>.</p>
+</section>
+
+<section id="perf">
+  <h2>Performance &amp; tuning</h2>
+  <ul>
+    <li>Default chunk size is 1&nbsp;MiB; larger chunks may improve throughput on fast NVMe.</li>
+    <li>Argon2id memory cost (default 256&nbsp;MiB) dominates encryption start time; adjust via environment if needed.</li>
+    <li>Parallelism (<code>p_cost</code>) defaults to <code>min(num_cpus, 8)</code> (capped at 32).</li>
+  </ul>
+</section>
+
+<section id="faq">
+  <h2>FAQ</h2>
+  <h3>Does SFE change file names or extensions?</h3>
+  <p>No. It replaces the file <em>in place</em>. Consider keeping backups or working on copies if you prefer a separate output path.</p>
+
+  <h3>What happens if my machine crashes mid‑operation?</h3>
+  <p>You either keep the original (if crash happened before the atomic replace) or you get the fully written replacement. You never get a truncated mix.</p>
+
+  <h3>Can I use key files or hardware tokens?</h3>
+  <p>Not in this minimal CLI. The codebase is structured to allow future extensions such as key files or TPM/DPAPI assisted wrapping.</p>
+</section>
+
+<section id="dev-notes">
+  <h2>Development notes</h2>
+  <ul>
+    <li>Run <code>cargo clippy -- -D warnings</code> during CI.</li>
+    <li>Run <code>cargo audit</code> to check for vulnerable dependencies.</li>
+    <li>Consider adding property‑based tests and fuzzing for header parsing and chunk reassembly.</li>
+  </ul>
+</section>
+
+<section id="license">
+  <h2>License</h2>
+  <p>Dual‑licensed under <strong>MIT</strong> or <strong>Apache‑2.0</strong> at your option.</p>
+</section>
+
+<footer>
+  <p>&copy; 2025 SFE authors. No warranty. Use at your own risk.</p>
+</footer>
+</main>
+</body>
+</html>

@@ -1,0 +1,21 @@
+[package]
+name = "sfe"
+version = "0.1.0"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+description = "Secure, crash-safe, streaming file encryption in place (XChaCha20-Poly1305 + Argon2id)."
+
+[dependencies]
+anyhow = "1"
+argon2 = "0.5"
+blake3 = "1.5"
+chacha20poly1305 = "0.10.1"
+rand = "0.8"
+rpassword = "7"
+zeroize = "1.6"
+tempfile = "3.10"
+num_cpus = "1.16"
+cfg-if = "1.0"
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.52", features = ["Win32_Storage_FileSystem"] }
